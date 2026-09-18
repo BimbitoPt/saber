@@ -7,6 +7,7 @@ import {
   startSession,
   startDevServer,
   stopSession,
+  defaultModel,
   type Project,
   type SessionListItem,
 } from "../lib/api";
@@ -35,6 +36,13 @@ function IndexComponent() {
   const [booting, setBooting] = useState(false);
   const [error, setError] = useState("");
   const [bottomTab, setBottomTab] = useState<"dev" | "browser">("dev");
+  const [defaultModelLabel, setDefaultModelLabel] = useState("");
+
+  useEffect(() => {
+    defaultModel()
+      .then((d) => setDefaultModelLabel(d.default))
+      .catch(() => setDefaultModelLabel(""));
+  }, []);
 
   useEffect(() => {
     listProjects()
@@ -112,15 +120,18 @@ function IndexComponent() {
           </div>
           <div className="space-y-1">
             <label htmlFor="ade-model" className="text-xs text-muted" >
-              Model <span className="text-faint">(optional)</span>
+              Model <span className="text-faint">(empty = opencode default)</span>
             </label>
             <input
               id="ade-model"
               value={model}
               onChange={(e) => setModel(e.target.value)}
-              placeholder="provider/model"
+              placeholder="default — from opencode config"
               className="w-full rounded-md border border-line bg-panel-2 px-2.5 py-2 text-sm placeholder:text-faint"
             />
+            {defaultModelLabel && (
+              <div className="text-[10px] text-faint">opencode default: {defaultModelLabel}</div>
+            )}
           </div>
           <button
             type="submit"

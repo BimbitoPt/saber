@@ -110,6 +110,22 @@ async function handleApi(request: Request): Promise<Response | null> {
     return jsonResponse({ ok: true });
   }
 
+  if (path === "/api/default-model" && request.method === "GET") {
+    try {
+      const jsonc = await import("node:fs").then((fs) =>
+        fs.promises.readFile(
+          process.env["USERPROFILE"] + "\\.config\\opencode\\opencode.jsonc",
+          "utf8",
+        ),
+      );
+      const match = /["']?model["']?\s*:\s*["']([^"']+)["']/.exec(jsonc);
+      return jsonResponse({ default: match?.[1] ?? "opencode built-in default (per auth provider)" });
+    } catch (error) {
+      console.error(describeError(error));
+      return jsonResponse({ default: "opencode built-in default (per auth provider)" });
+    }
+  }
+
   if (path === "/api/projects" && request.method === "GET") {
     try {
       return jsonResponse(reloadProjects());

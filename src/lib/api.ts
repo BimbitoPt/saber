@@ -32,6 +32,10 @@ export function listProjects() {
   return jsonFetch<Project[]>("/api/projects");
 }
 
+export function defaultModel() {
+  return jsonFetch<{ default: string }>("/api/default-model");
+}
+
 export function listSessions() {
   return jsonFetch<SessionListItem[]>("/api/sessions");
 }
