@@ -6,6 +6,7 @@ import { register, get, list, pushLine, linesSince, setStatus } from "./server/s
 import type { SessionRecord } from "./server/sessionStore";
 import { reloadProjects } from "./server/projects";
 import { startDevServer, listDevServers, stopDevServer } from "./server/devServers";
+import { enhance } from "./server/promptEnhancer";
 import { goto as browserGoto, screenshot as browserShot, act as browserAct, currentUrl } from "./server/browser";
 
 type ServerEntry = {
@@ -191,7 +192,11 @@ async function handleApi(request: Request): Promise<Response | null> {
 
 function startSession(opts: { project: string; task: string; model?: string }): string {
   const provider = getProvider();
-  const proc = provider.spawn({ workdir: opts.project, task: opts.task, model: opts.model });
+  const proc = provider.spawn({
+    workdir: opts.project,
+    task: enhance(opts.task, opts.project),
+    model: opts.model,
+  });
   const id = crypto.randomUUID();
   const record = {
     id,
