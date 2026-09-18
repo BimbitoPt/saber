@@ -3,3 +3,5 @@ dist/
 .vite/
 routeTree.gen.*
 output/
+src-tauri/target/
+src-tauri/target/

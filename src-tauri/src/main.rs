@@ -1,4 +1,5 @@
 use std::net::TcpStream;
+use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
@@ -87,7 +88,7 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
-    app.run(|_handle, event| {
+    app.run(move |_handle, event| {
         if let RunEvent::Exit = event {
             if spawned_locally {
                 kill_dev_server();

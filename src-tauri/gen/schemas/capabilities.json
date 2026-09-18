@@ -1,0 +1,1 @@
+{"ade-window":{"identifier":"ade-window","description":"","remote":{"urls":["http://localhost:8082"]},"local":true,"windows":["main"],"permissions":["core:window:allow-minimize","core:window:allow-maximize","core:window:allow-unmaximize","core:window:allow-toggle-maximize","core:window:allow-close","core:window:allow-start-dragging","core:default"]}}
