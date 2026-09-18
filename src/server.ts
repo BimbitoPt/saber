@@ -206,11 +206,20 @@ async function handleApi(request: Request): Promise<Response | null> {
   return jsonResponse({ error: "not found" }, 404);
 }
 
+function resolveWorkdir(projectRef: string): string {
+  const looksLikePath = projectRef.includes("\\") || projectRef.includes("/");
+  if (looksLikePath) return projectRef;
+  const project = reloadProjects().find((p) => p.name === projectRef);
+  if (!project) throw new Error(`unknown project: ${projectRef}`);
+  return project.path;
+}
+
 function startSession(opts: { project: string; task: string; model?: string }): string {
   const provider = getProvider();
+  const workdir = resolveWorkdir(opts.project);
   const proc = provider.spawn({
-    workdir: opts.project,
-    task: enhance(opts.task, opts.project),
+    workdir,
+    task: enhance(opts.task, workdir),
     model: opts.model,
   });
   const id = crypto.randomUUID();
