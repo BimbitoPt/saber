@@ -1,10 +1,22 @@
-import { createRootRoute, Link, Outlet } from "@tanstack/react-router";
+import { createRootRoute, Link, Outlet, HeadContent, Scripts } from "@tanstack/react-router";
+import { type ReactNode } from "react";
 import { Terminal, Globe2, Server } from "lucide-react";
 import "../styles/app.css";
 
 export const Route = createRootRoute({
   component: RootComponent,
 });
+
+function Shell({ children }: { children: ReactNode }) {
+  return (
+    <html lang="en">
+      <head>
+        <HeadContent />
+      </head>
+      <body>{children}</body>
+    </html>
+  );
+}
 
 function TitleBar() {
   const tauri = typeof window !== "undefined" ? ((window as Record<string, any>)["__TAURI_INTERNALS__"] ?? null) : null;
@@ -59,22 +71,25 @@ function TitleButton({ children, onClick, close, label }: { children: React.Reac
 
 function RootComponent() {
   return (
-    <div className="flex h-screen min-h-0 flex-col bg-bg text-text">
-      <TitleBar />
-      <div className="flex min-h-0 flex-1">
-        <nav className="flex w-48 shrink-0 flex-col gap-1 border-r border-line bg-panel p-2">
-          <div className="mb-2 px-2 pt-2 text-[10px] font-bold uppercase tracking-[0.18em] text-faint">
-            Workspace
-          </div>
-          <NavItem to="/" icon={<Terminal size={15} />} label="Sessions" />
-          <NavItem to="/" icon={<Server size={15} />} label="Dev Servers" />
-          <NavItem to="/" icon={<Globe2 size={15} />} label="Browser" />
-        </nav>
-        <main className="min-h-0 flex-1 overflow-hidden">
-          <Outlet />
-        </main>
+    <Shell>
+      <div className="flex h-screen min-h-0 flex-col bg-bg text-text">
+        <TitleBar />
+        <div className="flex min-h-0 flex-1">
+          <nav className="flex w-48 shrink-0 flex-col gap-1 border-r border-line bg-panel p-2">
+            <div className="mb-2 px-2 pt-2 text-[10px] font-bold uppercase tracking-[0.18em] text-faint">
+              Workspace
+            </div>
+            <NavItem to="/" icon={<Terminal size={15} />} label="Sessions" />
+            <NavItem to="/" icon={<Server size={15} />} label="Dev Servers" />
+            <NavItem to="/" icon={<Globe2 size={15} />} label="Browser" />
+          </nav>
+          <main className="min-h-0 flex-1 overflow-hidden">
+            <Outlet />
+          </main>
+        </div>
       </div>
-    </div>
+      <Scripts />
+    </Shell>
   );
 }
 
