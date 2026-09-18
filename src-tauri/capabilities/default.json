@@ -1,0 +1,17 @@
+{
+  "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tacli/schemas/capability.json",
+  "identifier": "ade-window",
+  "windows": ["main"],
+  "remote": {
+    "urls": ["http://localhost:8082"]
+  },
+  "permissions": [
+    "core:window:allow-minimize",
+    "core:window:allow-maximize",
+    "core:window:allow-unmaximize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-close",
+    "core:window:allow-start-dragging",
+    "core:default"
+  ]
+}

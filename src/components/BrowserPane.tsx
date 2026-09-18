@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { listDevServers } from "../lib/api";
+import { Globe2 } from "lucide-react";
 
 export function BrowserPane() {
   const [url, setUrl] = useState("");
@@ -53,27 +54,35 @@ export function BrowserPane() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex flex-wrap gap-2 border-b border-neutral-800 p-2 text-xs">
+      <div className="flex flex-wrap items-center gap-2 border-b border-line-soft bg-panel p-2 text-xs">
         <input
           value={url}
           onChange={(e) => setUrl(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && navigate(url)}
           placeholder="http://localhost:8081"
-          className="w-72 rounded border border-neutral-700 bg-neutral-900 px-2 py-1"
+          aria-label="URL to visit"
+          className="w-64 rounded-md border border-line bg-panel-2 px-2.5 py-1.5 font-mono text-[11px] placeholder:text-faint"
         />
-        <button onClick={() => navigate(url)} className="rounded border border-neutral-700 px-2 hover:bg-neutral-800">
+        <button
+          onClick={() => navigate(url)}
+          className="rounded-md border border-line px-2.5 py-1.5 text-[11px] text-muted transition-colors duration-150 hover:bg-panel-2"
+        >
           go
         </button>
         <input
           value={target}
           onChange={(e) => setTarget(e.target.value)}
           placeholder="css selector"
-          className="w-40 rounded border border-neutral-700 bg-neutral-900 px-2 py-1"
+          aria-label="CSS selector for action"
+          className="w-40 rounded-md border border-line bg-panel-2 px-2.5 py-1.5 font-mono text-[11px] placeholder:text-faint"
         />
-        <button onClick={() => act("click")} className="rounded border border-neutral-700 px-2 hover:bg-neutral-800">
+        <button
+          onClick={() => act("click")}
+          className="rounded-md border border-line px-2.5 py-1.5 text-[11px] text-muted transition-colors duration-150 hover:bg-panel-2"
+        >
           click
         </button>
-        <label className="flex items-center gap-1">
+        <label className="flex cursor-pointer items-center gap-1.5 text-muted">
           <input type="checkbox" checked={live} onChange={(e) => setLive(e.target.checked)} />
           live
         </label>
@@ -85,14 +94,22 @@ export function BrowserPane() {
               setUrl(u);
               navigate(u);
             }}
-            className="rounded border border-neutral-700 px-2 text-neutral-400 hover:bg-neutral-800"
+            className="flex items-center gap-1 rounded-md border border-line px-2.5 py-1.5 text-[11px] text-muted transition-colors duration-150 hover:bg-panel-2"
           >
+            <Globe2 size={11} />
             {s.project}
           </button>
         ))}
+        <span className="ml-auto hidden items-center gap-1 text-[10px] text-faint sm:flex">
+          <Globe2 size={11} /> rendered by headless chromium in the ADE server
+        </span>
       </div>
-      <div className="min-h-0 flex-1 overflow-auto bg-neutral-950">
-        <img src={`/api/browser/screenshot?t=${shot}`} alt="browser" className="max-w-full" />
+      <div className="min-h-0 flex-1 overflow-auto bg-[#060607] p-2">
+        <img
+          src={`/api/browser/screenshot?t=${shot}`}
+          alt="Headless browser view"
+          className="max-w-full rounded-md border border-line"
+        />
       </div>
     </div>
   );

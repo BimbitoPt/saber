@@ -13,12 +13,15 @@
     "@tanstack/react-router": "^1.170.33",
     "@tanstack/react-start": "^1.168.50",
     "@tanstack/router-plugin": "^1.168.36",
+    "lucide-react": "^1.47.0",
     "playwright": "^1.63.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "tailwindcss": "^4.2.1"
   },
   "devDependencies": {
+    "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/cli": "^2.11.4",
     "@types/node": "^22.16.5",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",

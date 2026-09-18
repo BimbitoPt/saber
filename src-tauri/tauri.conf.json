@@ -1,0 +1,31 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "MSTUDIO ADE",
+  "version": "0.1.0",
+  "identifier": "pt.mstudioweb.ade",
+  "build": {
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "MSTUDIO ADE",
+        "url": "http://localhost:8082",
+        "width": 1380,
+        "height": 880,
+        "minWidth": 1000,
+        "minHeight": 640,
+        "decorations": false,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": false,
+    "targets": []
+  }
+}

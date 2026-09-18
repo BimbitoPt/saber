@@ -1,9 +1,16 @@
 import { useEffect, useState } from "react";
 import { listDevServers, startDevServer, stopDevServer, type DevServerItem } from "../lib/api";
+import { Loader2 } from "lucide-react";
 
-export function DevServerPane() {
+const STATUS_STYLE: Record<string, string> = {
+  starting: "text-run",
+  up: "text-ok",
+  down: "text-err",
+};
+
+export function DevServerPane({ onOpenInBrowser }: { onOpenInBrowser?: () => void }) {
   const [servers, setServers] = useState<DevServerItem[]>([]);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -25,7 +32,7 @@ export function DevServerPane() {
   }, []);
 
   async function handle(project: string, action: "start" | "stop") {
-    setBusy(true);
+    setBusy(project);
     setError("");
     try {
       if (action === "start") await startDevServer(project);
@@ -33,43 +40,44 @@ export function DevServerPane() {
     } catch (e) {
       setError(String(e));
     } finally {
-      setBusy(false);
+      setBusy("");
     }
   }
 
   return (
     <div className="h-full overflow-y-auto p-3 text-xs">
-      {error && <div className="mb-2 text-red-400">{error}</div>}
+      {error && <div className="mb-2 text-err">{error}</div>}
       {servers.length === 0 && (
-        <div className="text-neutral-500">No dev servers started (start one from a session form)</div>
+        <div className="text-faint">No dev servers running. Start one from the CLI or a session form.</div>
       )}
-      <table className="w-full">
+      <table className="w-full" aria-label="Dev servers">
         <tbody>
           {servers.map((s) => (
-            <tr key={s.project} className="border-b border-neutral-800/60">
-              <td className="py-2">{s.project}</td>
-              <td className="py-2 font-mono text-neutral-400">{s.port}</td>
-              <td
-                className={
-                  s.status === "up"
-                    ? "py-2 text-green-400"
-                    : s.status === "starting"
-                      ? "py-2 text-yellow-400"
-                      : "py-2 text-red-400"
-                }
-              >
-                {s.status}
+            <tr key={s.project} className="border-b border-line-soft">
+              <td className="py-2.5 pl-1 text-[13px]">{s.project}</td>
+              <td className="py-2.5 font-mono text-[11px] text-muted">{s.port}</td>
+              <td className={`py-2.5 font-mono text-[11px] ${STATUS_STYLE[s.status]}`}>
+                {s.status === "starting" && <Loader2 size={11} className="mr-1 inline animate-spin" />}
+                ({s.status})
               </td>
-              <td className="py-2 text-right">
-                {s.status === "up" || s.status === "starting" ? (
+              <td className="py-2.5 pr-1 text-right">
+                {s.status !== "down" ? (
                   <button
-                    disabled={busy}
+                    disabled={busy === s.project}
                     onClick={() => handle(s.project, "stop")}
-                    className="rounded border border-neutral-700 px-2 py-1 hover:bg-neutral-800 disabled:opacity-40"
+                    className="rounded-md border border-line px-2.5 py-1.5 text-[11px] text-muted transition-colors duration-150 hover:bg-panel-2 disabled:opacity-40"
                   >
                     stop
                   </button>
-                ) : null}
+                ) : (
+                  <button
+                    disabled={busy === s.project}
+                    onClick={() => handle(s.project, "start")}
+                    className="rounded-md border border-line px-2.5 py-1.5 text-[11px] text-muted transition-colors duration-150 hover:bg-panel-2 disabled:opacity-40"
+                  >
+                    restart
+                  </button>
+                )}
               </td>
             </tr>
           ))}
