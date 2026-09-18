@@ -10,7 +10,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "MSTUDIO ADE",
+        "title": "Saber — by Mstudio",
         "url": "http://localhost:8082",
         "width": 1380,
         "height": 880,
