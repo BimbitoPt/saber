@@ -1,5 +1,6 @@
 {
-  "name": "mstudio-ade",
+  "name": "saber",
+  "productName": "Saber",
   "private": true,
   "sideEffects": false,
   "type": "module",

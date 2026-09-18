@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "MSTUDIO ADE",
+  "productName": "Saber",
   "version": "0.1.0",
-  "identifier": "pt.mstudioweb.ade",
+  "identifier": "pt.mstudioweb.saber",
   "build": {
     "frontendDist": "../dist"
   },

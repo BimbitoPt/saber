@@ -68,8 +68,7 @@ fn wait_until_up() -> bool {
 fn kill_dev_server() {
     if let Some(child) = DEV_CHILD.lock().unwrap().take() {
         let _ = Command::new("taskkill")
-            .args(["/pid", &child.id().to_string(), "/T", "/F"])
-            .creation_flags(CREATE_NO_WINDOW)
+            .args(["/pid", &child.id().to_string(), "/T", "/F"])            .creation_flags(CREATE_NO_WINDOW)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();

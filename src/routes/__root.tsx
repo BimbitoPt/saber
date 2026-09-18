@@ -38,7 +38,8 @@ function TitleBar() {
         <div className="flex h-5 w-5 items-center justify-center rounded-sm bg-accent text-[10px] font-black text-black">
           M
         </div>
-        <span className="select-none text-[13px] font-semibold tracking-wide">MSTUDIO ADE</span>
+        <span className="select-none text-[13px] font-semibold tracking-wide">SABER</span>
+        <span className="select-none text-[10px] uppercase tracking-[0.2em] text-faint">by Mstudio</span>
       </div>
       <div className="flex" style={{ height: "100%" }}>
         <TitleButton onClick={() => win("minimize")} label="Minimize">

@@ -57,7 +57,7 @@ export default {
       return response;
     } catch (error) {
       console.error(describeError(error));
-      return new Response("MSTUDIO ADE server error", { status: 500 });
+      return new Response("Saber server error", { status: 500 });
     }
   },
 };
