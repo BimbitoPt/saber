@@ -4,6 +4,8 @@ import { consumeLastCapturedError, describeError } from "./lib/error-capture";
 import { getProvider } from "./server/providers";
 import { register, get, list, pushLine, linesSince, setStatus } from "./server/sessionStore";
 import type { SessionRecord } from "./server/sessionStore";
+import { reloadProjects } from "./server/projects";
+import { startDevServer, listDevServers, stopDevServer } from "./server/devServers";
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
@@ -104,6 +106,45 @@ async function handleApi(request: Request): Promise<Response | null> {
     if (!session) return jsonResponse({ error: "not found" }, 404);
     if (session.proc) session.proc.kill();
     return jsonResponse({ ok: true });
+  }
+
+  if (path === "/api/projects" && request.method === "GET") {
+    try {
+      return jsonResponse(reloadProjects());
+    } catch (error) {
+      console.error(describeError(error));
+      return jsonResponse({ error: "projects inventory unreadable" }, 500);
+    }
+  }
+
+  if (path === "/api/dev-servers" && request.method === "GET") {
+    return jsonResponse(listDevServers());
+  }
+
+  if (path === "/api/dev-servers/start" && request.method === "POST") {
+    try {
+      const body = JSON.parse(await request.text()) as { project?: unknown };
+      if (typeof body.project !== "string") {
+        return jsonResponse({ error: "project is required" }, 400);
+      }
+      const result = await startDevServer(body.project);
+      return jsonResponse(result, 201);
+    } catch (error) {
+      console.error(describeError(error));
+      return jsonResponse({ error: describeError(error).slice(0, 200) }, 500);
+    }
+  }
+
+  if (path === "/api/dev-servers/stop" && request.method === "POST") {
+    try {
+      const body = JSON.parse(await request.text()) as { project?: unknown };
+      if (typeof body.project === "string" && stopDevServer(body.project)) {
+        return jsonResponse({ ok: true });
+      }
+      return jsonResponse({ error: "not running" }, 404);
+    } catch {
+      return jsonResponse({ error: "Invalid JSON" }, 400);
+    }
   }
 
   return jsonResponse({ error: "not found" }, 404);
