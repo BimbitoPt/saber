@@ -1,6 +1,9 @@
 import "./lib/error-capture";
 
-import { consumeLastCapturedError } from "./lib/error-capture";
+import { consumeLastCapturedError, describeError } from "./lib/error-capture";
+import { getProvider } from "./server/providers";
+import { register, get, list, pushLine, linesSince, setStatus } from "./server/sessionStore";
+import type { SessionRecord } from "./server/sessionStore";
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
@@ -17,22 +20,154 @@ async function getServerEntry(): Promise<ServerEntry> {
   return serverEntryPromise;
 }
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+function jsonResponse(data: unknown, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { "content-type": "application/json", "cache-control": "no-store" },
+  });
+}
+
+interface StartSessionBody {
+  project?: unknown;
+  task?: unknown;
+  model?: unknown;
+}
+
 export default {
   async fetch(request: Request, env: unknown, ctx: unknown) {
     try {
+      const apiResponse = await handleApi(request);
+      if (apiResponse) return apiResponse;
+
       const handler = await getServerEntry();
       const response = await handler.fetch(request, env, ctx);
       const contentType = response.headers.get("content-type") ?? "";
       if (response.status >= 500 && contentType.includes("application/json")) {
         const body = await response.clone().text();
-        if (body.includes("\"unhandled\":true")) {
-          console.error(consumeLastCapturedError() ?? `h3 swallowed SSR error: ${body}`);
+        if (body.includes('"unhandled":true')) {
+          console.error(consumeLastCapturedError() ?? new Error(`h3 swallowed SSR error: ${body}`));
         }
       }
       return response;
     } catch (error) {
-      console.error(error);
+      console.error(describeError(error));
       return new Response("MSTUDIO ADE server error", { status: 500 });
     }
   },
 };
+
+async function handleApi(request: Request): Promise<Response | null> {
+  const url = new URL(request.url);
+  const path = url.pathname;
+
+  if (!path.startsWith("/api/")) return null;
+
+  if (path === "/api/sessions" && request.method === "GET") {
+    return jsonResponse(list());
+  }
+
+  if (path === "/api/sessions" && request.method === "POST") {
+    let body: StartSessionBody;
+    try {
+      body = JSON.parse(await request.text());
+    } catch {
+      return jsonResponse({ error: "Invalid JSON" }, 400);
+    }
+    const project = typeof body.project === "string" ? body.project : "";
+    const task = typeof body.task === "string" ? body.task : "";
+    const model = typeof body.model === "string" ? body.model : undefined;
+    if (!project || !task) {
+      return jsonResponse({ error: "project and task are required" }, 400);
+    }
+    try {
+      const id = startSession({ project, task, model });
+      return jsonResponse({ id }, 201);
+    } catch (error) {
+      console.error(describeError(error));
+      return jsonResponse({ error: "spawn failed" }, 500);
+    }
+  }
+
+  const eventsMatch = /^\/api\/sessions\/([^/]+)\/events$/.exec(path);
+  if (eventsMatch && request.method === "GET") {
+    const id = eventsMatch[1];
+    const after = Number(url.searchParams.get("after") ?? "0") || 0;
+    const wait = url.searchParams.get("wait") === "1";
+    return eventsPoll(id, after, wait);
+  }
+
+  const stopMatch = /^\/api\/sessions\/([^/]+)\/stop$/.exec(path);
+  if (stopMatch && request.method === "POST") {
+    const session = get(stopMatch[1]);
+    if (!session) return jsonResponse({ error: "not found" }, 404);
+    if (session.proc) session.proc.kill();
+    return jsonResponse({ ok: true });
+  }
+
+  return jsonResponse({ error: "not found" }, 404);
+}
+
+function startSession(opts: { project: string; task: string; model?: string }): string {
+  const provider = getProvider();
+  const proc = provider.spawn({ workdir: opts.project, task: opts.task, model: opts.model });
+  const id = crypto.randomUUID();
+  const record = {
+    id,
+    project: opts.project,
+    task: opts.task,
+    status: "running" as const,
+    proc,
+    eventCount: 0,
+    lines: [] as string[],
+    startedAt: Date.now(),
+    exitCode: null,
+  };
+  register(record);
+
+  proc.stdout.on("data", (data: Buffer) => {
+    pushLine(id, data.toString());
+  });
+  proc.stderr.on("data", () => {});
+  proc.on("close", (code) => {
+    setStatus(id, code === 0 ? "done" : "error", code);
+  });
+  proc.on("error", (error) => {
+    console.error(describeError(error));
+    setStatus(id, "error", null);
+    pushLine(id, JSON.stringify({ type: "provider_error", message: describeError(error) }));
+  });
+
+  return id;
+}
+
+const POLL_INTERVAL_MS = 500;
+const LONG_POLL_MAX_MS = 25_000;
+
+async function eventsPoll(id: string, after: number, wait: boolean): Promise<Response> {
+  const session = get(id);
+  if (!session) return jsonResponse({ error: "not found" }, 404);
+  if (!wait) {
+    return sessionSnapshot(id, after);
+  }
+
+  const deadline = Date.now() + LONG_POLL_MAX_MS;
+  while (Date.now() < deadline) {
+    if (session.lines.length > after || session.status !== "running") {
+      return sessionSnapshot(id, after);
+    }
+    await sleep(POLL_INTERVAL_MS);
+  }
+  return sessionSnapshot(id, after);
+}
+
+function sessionSnapshot(id: string, after: number): Response {
+  const session = get(id);
+  if (!session) return jsonResponse({ error: "not found" }, 404);
+  return jsonResponse({
+    status: session.status,
+    next: session.lines.length,
+    lines: linesSince(id, after),
+  });
+}
