@@ -6,6 +6,7 @@ import { register, get, list, pushLine, linesSince, setStatus } from "./server/s
 import type { SessionRecord } from "./server/sessionStore";
 import { reloadProjects } from "./server/projects";
 import { startDevServer, listDevServers, stopDevServer } from "./server/devServers";
+import { goto as browserGoto, screenshot as browserShot, act as browserAct, currentUrl } from "./server/browser";
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
@@ -144,6 +145,44 @@ async function handleApi(request: Request): Promise<Response | null> {
       return jsonResponse({ error: "not running" }, 404);
     } catch {
       return jsonResponse({ error: "Invalid JSON" }, 400);
+    }
+  }
+
+  if (path === "/api/browser/goto" && request.method === "POST") {
+    try {
+      const body = JSON.parse(await request.text()) as { url?: unknown };
+      if (typeof body.url !== "string") return jsonResponse({ error: "url is required" }, 400);
+      await browserGoto(body.url);
+      return jsonResponse({ ok: true, url: await currentUrl() });
+    } catch (error) {
+      console.error(describeError(error));
+      return jsonResponse({ error: describeError(error).slice(0, 300) }, 500);
+    }
+  }
+
+  if (path === "/api/browser/act" && request.method === "POST") {
+    try {
+      const body = JSON.parse(await request.text()) as { action?: unknown; target?: unknown; value?: unknown };
+      if (typeof body.action !== "string" || typeof body.target !== "string") {
+        return jsonResponse({ error: "action and target are required" }, 400);
+      }
+      await browserAct(body.action, body.target, typeof body.value === "string" ? body.value : undefined);
+      return jsonResponse({ ok: true });
+    } catch (error) {
+      console.error(describeError(error));
+      return jsonResponse({ error: describeError(error).slice(0, 200) }, 500);
+    }
+  }
+
+  if (path === "/api/browser/screenshot" && request.method === "GET") {
+    try {
+      const png = await browserShot();
+      return new Response(new Uint8Array(png), {
+        headers: { "content-type": "image/png", "cache-control": "no-store" },
+      });
+    } catch (error) {
+      console.error(describeError(error));
+      return jsonResponse({ error: "browser not ready" }, 503);
     }
   }
 

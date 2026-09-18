@@ -163,7 +163,7 @@ function IndexComponent() {
             </button>
           </div>
           <div className="min-h-0 flex-1 overflow-hidden">
-            {bottomTab === "dev" ? <DevServerPane /> : <div className="p-3 text-xs text-neutral-500">Task 6</div>}
+            {bottomTab === "dev" ? <DevServerPane /> : <BrowserPane />}
           </div>
         </div>
       </section>
