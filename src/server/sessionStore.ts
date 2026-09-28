@@ -13,6 +13,7 @@ export interface SessionRecord {
   startedAt: number;
   endedAt?: number;
   exitCode: number | null;
+  opencodeSessionID?: string;
 }
 
 const MAX_LINES = 2_000;

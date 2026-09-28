@@ -12,7 +12,7 @@ export default defineConfig({
     dedupe: ["react", "react-dom", "@tanstack/react-router", "@tanstack/react-start"],
   },
   server: {
-    host: "::",
+    host: "127.0.0.1",
     port: 8082,
     strictPort: true,
   },

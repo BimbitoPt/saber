@@ -1,4 +1,6 @@
 import { spawn } from "node:child_process";
+import type { ChildProcessByStdio } from "node:child_process";
+import type { Readable } from "node:stream";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { SpawnOptions } from "./types";
@@ -19,6 +21,11 @@ function resolveExe(): string {
 export const OPENCODE_EXE = resolveExe();
 
 export function buildArgs(opts: SpawnOptions): string[] {
+  if (opts.session) {
+    const args = ["run", "-s", opts.session, opts.task, "--format", "json", "--dir", opts.workdir];
+    if (opts.model) args.push("--model", opts.model);
+    return args;
+  }
   const args = ["run", opts.task, "--format", "json", "--dir", opts.workdir];
   if (opts.model) args.push("--model", opts.model);
   return args;
@@ -27,7 +34,7 @@ export function buildArgs(opts: SpawnOptions): string[] {
 export function opencodeProvider(): {
   name: string;
   args: typeof buildArgs;
-  spawn(opts: SpawnOptions): ChildProcessWithoutNullStreams;
+  spawn(opts: SpawnOptions): ChildProcessByStdio<null, Readable, Readable>;
 } {
   return {
     name: "opencode",

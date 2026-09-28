@@ -3,7 +3,7 @@
   "identifier": "ade-window",
   "windows": ["main"],
   "remote": {
-    "urls": ["http://localhost:8082"]
+    "urls": ["http://127.0.0.1:*"]
   },
   "permissions": [
     "core:window:allow-minimize",
@@ -12,6 +12,11 @@
     "core:window:allow-toggle-maximize",
     "core:window:allow-close",
     "core:window:allow-start-dragging",
-    "core:default"
+    "core:default",
+    "allow-terminal-start",
+    "allow-terminal-write",
+    "allow-terminal-resize",
+    "allow-terminal-close",
+    "allow-terminal-list"
   ]
 }

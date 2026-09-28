@@ -8,24 +8,18 @@
   },
   "app": {
     "withGlobalTauri": true,
-    "windows": [
-      {
-        "title": "Saber — by Mstudio",
-        "url": "http://localhost:8082",
-        "width": 1380,
-        "height": 880,
-        "minWidth": 1000,
-        "minHeight": 640,
-        "decorations": false,
-        "center": true
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": null
     }
   },
   "bundle": {
-    "active": false,
-    "targets": []
+    "active": true,
+    "targets": ["msi", "nsis"],
+    "icon": ["icons/icon.ico"],
+    "externalBin": ["binaries/node"],
+    "resources": {
+      "resources/saber-server/.output/": "saber-server/.output/"
+    }
   }
 }

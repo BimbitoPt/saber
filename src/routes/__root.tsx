@@ -1,6 +1,6 @@
 import { createRootRoute, Link, Outlet, HeadContent, Scripts } from "@tanstack/react-router";
 import { type ReactNode } from "react";
-import { Terminal, Globe2, Server } from "lucide-react";
+import { Terminal } from "lucide-react";
 import "../styles/app.css";
 
 export const Route = createRootRoute({
@@ -80,9 +80,7 @@ function RootComponent() {
             <div className="mb-2 px-2 pt-2 text-[10px] font-bold uppercase tracking-[0.18em] text-faint">
               Workspace
             </div>
-            <NavItem to="/" icon={<Terminal size={15} />} label="Sessions" />
-            <NavItem to="/" icon={<Server size={15} />} label="Dev Servers" />
-            <NavItem to="/" icon={<Globe2 size={15} />} label="Browser" />
+            <NavItem to="/" icon={<Terminal size={15} />} label="Tasks" />
           </nav>
           <main className="min-h-0 flex-1 overflow-hidden">
             <Outlet />

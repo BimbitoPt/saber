@@ -2,7 +2,7 @@
 
 ## Status and authorization
 
-Design approved by the user on 2026-09-23. This document defines the M5 behavior slice; implementation remains gated on the user's review of this spec.
+Design approved by the user on 2026-09-23. The written spec was reviewed and approved before implementation.
 
 ## Problem and user workflow
 
@@ -14,7 +14,7 @@ After selecting a task in the switcher, the user opens the switcher again and fi
 
 Add a recency preference to the existing keyboard task switcher. Store at most eight unique task IDs in a dedicated local preference key. A successful switcher selection moves that task ID to the front and removes any previous copy. The switcher shows extant recent tasks first, then all remaining tasks in their existing source order. Searching continues to match task title, project basename, and full path across all tasks while preserving the recent-first ordering.
 
-Ignore IDs that no longer map to a current task and deduplicate malformed/repeated IDs when reading the preference. Missing, invalid, or unavailable storage falls back to the existing task-list ordering without blocking the switcher. Recency is a UI preference only: it must not mutate task/run/checkpoint data, derive or write status, launch a shell, create a run, or alter task/session ownership.
+Ignore IDs that no longer map to a current task and deduplicate malformed/repeated IDs when reading the preference. Missing, invalid, or unavailable storage falls back to the existing task-list ordering without blocking the switcher. Recency is a UI preference only: it must not mutate task/run/checkpoint data, derive or write status, create a run, or alter task/session ownership. Selecting a task continues the existing terminal lifecycle; recent ordering adds no terminal-start request of its own.
 
 Out of scope: manual pins, configurable limits, recency timestamps, cross-device synchronization, task/run schema changes, a second workflow status, task-list reordering, automatic task selection, command injection, and changes to terminal lifecycle.
 
@@ -46,4 +46,19 @@ On a switcher selection, first pass through the existing task selection flow; up
 - The existing task list remains the source of truth for task availability and status. Stale preference IDs cannot create phantom tasks.
 - Read/write failures have explicit fallbacks, and the normal task-selection callback remains the only selection and terminal lifecycle entry point.
 - Recent-first order applies to search results; grouping is based on whether each matched current task is in the valid recent set.
-- No placeholders or conflicting behavior remain. Implementation plan and completion evidence will be added after the user reviews this spec.
+- No placeholders or conflicting behavior remain. Implementation plan and current completion evidence follow; native switch-away-and-back evidence is recorded below.
+
+## Implementation and verification evidence
+
+Implementation is present in src/lib/taskSwitcher.ts, src/components/TaskWorkspace.tsx, and src/components/TaskSwitcher.tsx.
+
+| Requirement | Outcome | Evidence and limitation |
+| --- | --- | --- |
+| RTS-01 | Verified | Ten focused Vitest cases cover recent order, source order of remaining tasks, stale/duplicate IDs, and the eight-ID cap. Browser preview and native Tauri both rendered Recent before All tasks. |
+| RTS-02 | Verified | Browser preview selected two tasks in sequence; the second moved to the front. The order remained after reloading the preview. Unit tests cover deduplication and ninth-item eviction. |
+| RTS-03 | Verified | Existing case-insensitive title, basename, and full-path filtering tests pass. Browser preview searched across Recent and All tasks while preserving the groups. |
+| RTS-04 | Verified by helper tests and code inspection | Storage tests assert the dedicated saber.taskSwitcher.recents key and JSON value. The change adds no task/run/checkpoint API calls or data fields; the existing select(id) path remains unchanged. |
+| RTS-05 | Verified | Unit cases cover malformed JSON, wrong shape, duplicates, empty/non-string values, stale IDs, and storage read/write failures. |
+| RTS-06 | Verified on Windows | Browser preview verified shortcut open, group labels, status/current labels, search, Arrow Down, Enter selection, Escape, and preference persistence. Native Tauri verified the grouped palette and A-B-A selection: selected the existing interrupted Verify context restoration task (which displayed its saved checkpoint and remained locked), then returned to Codex adapter smoke test and confirmed the same idle PowerShell prompt remained. No shell was started, unlocked, or sent a command. |
+
+Checks passed: focused switcher suite (10 tests); full bun run test (13 files, 67 tests); bunx tsc --noEmit; bun run build; git diff --check. Browser preview started with no tasks, then showed the seven current smoke fixtures after reload. Two existing smoke tasks were selected and left in their existing state; the preview selection was restored to no task and Terminal view afterward. No provider run or terminal command was created or sent. Native A-B-A evidence used the idle PowerShell shell in the disposable Codex adapter smoke task; the other selected task was already interrupted and stayed locked. Linux and macOS remain untested.

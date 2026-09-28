@@ -1,0 +1,140 @@
+import { useEffect, useState } from "react";
+import { acknowledgeRun, launchTask, listTaskRuns, saveTask, stopSession, listProviders } from "../lib/api";
+import { runStatusLabel, providerLabels, type ProviderId, type ProviderStatus, type TaskRecord, type RunRecord } from "../lib/tasks";
+import { SessionPane } from "./SessionPane";
+import { WorkspacePanel } from "./WorkspacePanel";
+import { VerificationPanel } from "./VerificationPanel";
+
+const inputClass = "w-full rounded-md border border-line bg-panel-2 px-3 py-2 text-sm text-text";
+const fields = (task: TaskRecord) => ({ title: task.title, spec: task.spec, criteria: task.criteria, context: task.context, draft: task.draft });
+
+export function TaskDetail({ task, onSaved }: { task: TaskRecord; onSaved: (task: TaskRecord) => void }) {
+  const [form, setForm] = useState(() => fields(task));
+  const [saved, setSaved] = useState(() => fields(task));
+  const [runs, setRuns] = useState<RunRecord[]>([]);
+  const [runId, setRunId] = useState<string | null>(null);
+  const [model, setModel] = useState("");
+  const [provider, setProvider] = useState<ProviderId>("opencode");
+  const [providers, setProviders] = useState<ProviderStatus[]>([]);
+  const [checking, setChecking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [workspaceBusy, setWorkspaceBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const storageKey = `saber.task.${task.id}`;
+  const dirty = JSON.stringify(form) !== JSON.stringify(saved);
+
+  async function refreshProviders() {
+    setChecking(true);
+    try { setProviders(await listProviders()); }
+    catch (e) { setError(String(e)); }
+    finally { setChecking(false); }
+  }
+
+  useEffect(() => {
+    void refreshProviders();
+    try {
+      const previous = localStorage.getItem(`saber.provider.${task.id}`);
+      if (previous === "opencode" || previous === "codex" || previous === "claude") setProvider(previous);
+    } catch {}
+  }, [task.id]);
+
+  useEffect(() => {
+    try {
+      const recovery = JSON.parse(localStorage.getItem(storageKey) ?? "null");
+      if (recovery && Object.keys(fields(task)).every((key) => typeof recovery[key] === "string")) setForm(recovery);
+    } catch {}
+    let cancelled = false;
+    const refresh = () => listTaskRuns(task.id).then((items) => {
+      if (!cancelled) { setRuns(items); setRunId((old) => old ?? items[0]?.id ?? null); }
+    }).catch((e) => { if (!cancelled) setError(String(e)); });
+    void refresh();
+    const timer = setInterval(refresh, 1500);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [task.id, storageKey]);
+
+  function edit(key: keyof typeof form, value: string) {
+    const next = { ...form, [key]: value };
+    setForm(next); setMessage("");
+    try { localStorage.setItem(storageKey, JSON.stringify(next)); }
+    catch { setError("Local recovery is unavailable. Save changes before switching tasks."); }
+  }
+
+  async function save() {
+    const result = await saveTask(task.id, form);
+    setSaved(fields(result)); onSaved(result);
+    try { localStorage.removeItem(storageKey); } catch {}
+    return result;
+  }
+
+  async function action(operation: () => Promise<void>) {
+    setBusy(true); setError(""); setMessage("");
+    try { await operation(); }
+    catch (e) { setError(String(e)); }
+    finally { setBusy(false); }
+  }
+
+  async function launch(followup = false) {
+    await save();
+    const result = await launchTask(task.id, { provider, model: model.trim() || undefined, followup: followup ? form.draft : undefined });
+    setRunId(result.id);
+    setRuns(await listTaskRuns(task.id));
+    setMessage("Run started. The saved draft is retained for recovery.");
+  }
+
+  const latest = runs[0];
+  const active = runs.some((run) => run.status === "running");
+  const interrupted = runs.filter((run) => run.status === "interrupted");
+  const selectedRun = runs.find((run) => run.id === runId);
+  const readiness = providers.find((item) => item.id === provider);
+  const unavailable = checking || !readiness || !readiness.installed || readiness.auth === "signed-out";
+  const workspaceUnavailable = !!task.workspace && task.workspace.state !== "ready";
+  const executionPath = task.workspace?.path ?? task.project;
+
+  return <div className="space-y-4 p-5">
+    <div className="flex flex-wrap items-start justify-between gap-3">
+      <div><h2 className="text-lg font-semibold">{task.title}</h2><p className="mt-1 text-xs text-muted">Spec {task.revision} · {latest ? `${runStatusLabel[latest.status]} · ${providerLabels[latest.provider]}` : "Draft"}</p><p className="mt-1 break-all text-xs text-faint">{task.project}</p></div>
+      <button disabled={busy || workspaceBusy} onClick={() => void action(async () => { await save(); setMessage("Task and context saved."); })} className="rounded border border-line px-3 py-2 text-xs disabled:opacity-40">{dirty ? "Save changes" : "Saved"}</button>
+    </div>
+    {error && <p role="alert" className="text-sm text-err">{error}</p>}
+    {message && <p role="status" className="text-xs text-muted">{message}</p>}
+    {dirty && <p className="text-xs text-muted">Unsaved edits restored locally. Save to update the task.</p>}
+    <WorkspacePanel task={task} locked={busy || active || interrupted.length > 0} onSaved={onSaved} onBusyChange={setWorkspaceBusy} />
+    <VerificationPanel task={task} runs={runs} disabled={busy || workspaceBusy || active || interrupted.length > 0 || dirty} />
+    <fieldset disabled={busy || workspaceBusy} className="space-y-3 disabled:opacity-60">
+      <details>
+        <summary className="cursor-pointer text-sm text-muted">Specification and acceptance criteria</summary>
+        <div className="mt-3 space-y-3">
+          <label className="block text-xs text-muted">Task title<input value={form.title} onChange={(e) => edit("title", e.target.value)} className={inputClass} /></label>
+          <label className="block text-xs text-muted">Specification<textarea rows={4} value={form.spec} onChange={(e) => edit("spec", e.target.value)} className={inputClass} /></label>
+          <label className="block text-xs text-muted">Acceptance criteria<textarea rows={3} value={form.criteria} onChange={(e) => edit("criteria", e.target.value)} placeholder={"AC-01: What must be true?\nAC-02: What else must hold?"} className={inputClass} /></label>
+        </div>
+      </details>
+      <label className="block space-y-1 text-xs text-muted"><span>Context checkpoint</span><textarea rows={3} value={form.context} onChange={(e) => edit("context", e.target.value)} placeholder="Decisions, relevant files, blockers, and next action" className={inputClass} /></label>
+      <label className="block space-y-1 text-xs text-muted"><span>Follow-up draft</span><textarea rows={2} value={form.draft} onChange={(e) => edit("draft", e.target.value)} placeholder="Keep your next instruction here while you switch tasks" className={inputClass} /></label>
+      <div className="flex flex-wrap items-end gap-2">
+        <label className="min-w-40 text-xs text-muted">Provider<select value={provider} onChange={(e) => {
+          const next = e.target.value as ProviderId; setProvider(next); setModel("");
+          try { localStorage.setItem(`saber.provider.${task.id}`, next); } catch {}
+        }} className={inputClass}>{Object.entries(providerLabels).map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>
+        <label className="min-w-40 flex-1 text-xs text-muted">Model (optional)<input value={model} onChange={(e) => setModel(e.target.value)} placeholder={`${providerLabels[provider]} default`} className={inputClass} /></label>
+        <button disabled={unavailable || workspaceUnavailable || active || interrupted.length > 0} onClick={() => void action(() => launch())} className="rounded bg-accent px-3 py-2 text-sm font-semibold text-black disabled:opacity-40">{latest ? "New run" : "Run specification"}</button>
+        {runs.some((run) => run.provider === provider && run.nativeSessionId && run.project === executionPath) && <button disabled={unavailable || workspaceUnavailable || active || interrupted.length > 0 || !form.draft.trim()} onClick={() => void action(() => launch(true))} className="rounded border border-line px-3 py-2 text-sm disabled:opacity-40">Send follow-up</button>}
+        {active && <button onClick={() => void action(async () => { await stopSession(runs.find((run) => run.status === "running")!.id); setRuns(await listTaskRuns(task.id)); })} className="rounded border border-line px-3 py-2 text-sm">Stop run</button>}
+      </div>
+      <div className="flex flex-wrap items-center gap-2 text-xs text-muted"><span>{checking ? "Checking providers..." : readiness?.message ?? "Provider status unavailable."}</span><button disabled={checking} onClick={() => void refreshProviders()} className="underline disabled:opacity-40">Refresh providers</button></div>
+      {latest && latest.provider !== provider && <p className="text-xs text-muted">A new {providerLabels[provider]} run receives the saved specification and checkpoint. Native conversation history stays with its original provider.</p>}
+    </fieldset>
+    {interrupted.map((run) => <div key={run.id} className="rounded border border-line p-3 text-xs text-muted">
+      <p>Saber restarted during this run. Its process may still be running. Stop it before releasing this workspace.</p>
+      <button disabled={busy} onClick={() => void action(async () => { await acknowledgeRun(run.id); setRuns(await listTaskRuns(task.id)); })} className="mt-2 rounded border border-line px-3 py-2">I confirm the old process has stopped</button>
+    </div>)}
+    {runs.length > 0 && <div className="space-y-2 border-t border-line pt-3">
+      <label className="block text-xs text-muted">Run history<select aria-label="Run history" value={runId ?? ""} onChange={(e) => setRunId(e.target.value)} className={inputClass}>
+        {runs.map((run, index) => <option key={run.id} value={run.id}>Attempt {runs.length - index} · {providerLabels[run.provider]} · Spec {run.specRevision} · {runStatusLabel[run.status]} · {new Date(run.startedAt).toLocaleString()}</option>)}
+      </select></label>
+      {selectedRun && <details className="text-xs text-muted"><summary className="cursor-pointer">Scope captured for this run</summary><p className="mt-2 break-all">Working directory: {selectedRun.project}</p><pre className="mt-2 whitespace-pre-wrap rounded bg-panel p-3 font-sans">{selectedRun.task}</pre></details>}
+      <div className="h-80 min-h-0 rounded border border-line"><SessionPane sessionId={runId} /></div>
+    </div>}
+  </div>;
+}

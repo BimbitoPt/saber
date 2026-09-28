@@ -3,5 +3,10 @@ dist/
 .vite/
 routeTree.gen.*
 output/
+.output/
 src-tauri/target/
+src-tauri/binaries/*.exe
+src-tauri/binaries/node-*
+src-tauri/resources/saber-server/
 src-tauri/target/
+src-tauri/gen/schemas/linux-schema.json

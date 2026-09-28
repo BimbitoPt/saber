@@ -1,13 +1,19 @@
 import "./lib/error-capture";
+import { realpathSync, statSync } from "node:fs";
+import { isAbsolute } from "node:path";
 
 import { consumeLastCapturedError, describeError } from "./lib/error-capture";
-import { getProvider } from "./server/providers";
-import { register, get, list, pushLine, linesSince, setStatus } from "./server/sessionStore";
-import type { SessionRecord } from "./server/sessionStore";
+import { getTaskStore } from "./server/taskStore";
+import { getAgentRuns } from "./server/agentRuns";
+import { GitWorkspaceService, taskWorkdir } from "./server/gitWorkspaces";
+import { getTerminalLocks } from "./server/terminalLocks";
+import { createVerificationRecord, summarizeVerification } from "./lib/verification";
+import type { TaskInput, TaskPatch, ProviderId } from "./lib/tasks";
+import { providerStatus } from "./server/providers/executables";
 import { reloadProjects } from "./server/projects";
 import { startDevServer, listDevServers, stopDevServer } from "./server/devServers";
-import { enhance } from "./server/promptEnhancer";
 import { goto as browserGoto, screenshot as browserShot, act as browserAct, currentUrl } from "./server/browser";
+import { handleApiV1 } from "./server/apiV1";
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
@@ -42,6 +48,8 @@ interface StartSessionBody {
 export default {
   async fetch(request: Request, env: unknown, ctx: unknown) {
     try {
+      const versionedResponse = await handleApiV1(request);
+      if (versionedResponse) return versionedResponse;
       const apiResponse = await handleApi(request);
       if (apiResponse) return apiResponse;
 
@@ -68,8 +76,170 @@ async function handleApi(request: Request): Promise<Response | null> {
 
   if (!path.startsWith("/api/")) return null;
 
+  if (path === "/api/providers" && request.method === "GET") {
+    return jsonResponse(await Promise.all((["opencode", "codex", "claude"] as const).map((id) => providerStatus(id))));
+  }
+
+  if (path === "/api/tasks" && request.method === "GET") {
+    return jsonResponse(getTaskStore().listTasks());
+  }
+
+  if (path === "/api/tasks" && request.method === "POST") {
+    try {
+      const body = await request.json() as TaskInput;
+      if (!body || typeof body.project !== "string") throw new Error("project is required");
+      return jsonResponse(getTaskStore().createTask({ ...body, project: resolveWorkdir(body.project) }), 201);
+    } catch (error) { return jsonResponse({ error: String(error) }, 400); }
+  }
+
+  const taskMatch = /^\/api\/tasks\/([^/]+)$/.exec(path);
+  const verificationMatch = /^\/api\/tasks\/([^/]+)\/verifications$/.exec(path);
+  if (verificationMatch) {
+    const store = getTaskStore();
+    const task = store.getTask(verificationMatch[1]);
+    if (!task) return jsonResponse({ error: "Task not found" }, 404);
+    if (request.method === "GET") {
+      const records = store.listVerifications(task.id);
+      return jsonResponse({ records, summary: summarizeVerification(task.criteria, task.revision, records) });
+    }
+    if (request.method === "POST") {
+      try {
+        const body = await request.json() as { criterionId?: unknown; outcome?: unknown; check?: unknown; evidence?: unknown; runId?: unknown };
+        if (!body || typeof body !== "object" || Array.isArray(body)) return jsonResponse({ error: "Invalid verification record" }, 400);
+          const run = typeof body?.runId === "string" ? store.getRun(body.runId) : undefined;
+          const record = createVerificationRecord(task, body, run);
+          store.createVerification(record);
+          const records = store.listVerifications(task.id);
+        return jsonResponse({ record, records, summary: summarizeVerification(task.criteria, task.revision, records) }, 201);
+      } catch (error) {
+        const message = String(error);
+        const status = message.includes("Run not found") ? 404 : message.includes("current task revision") || message.includes("current spec revision") ? 409 : 400;
+        return jsonResponse({ error: message }, status);
+      }
+    }
+    return jsonResponse({ error: "Method not allowed" }, 405);
+  }
+  const workspaceMatch = /^\/api\/tasks\/([^/]+)\/workspace(\/merge)?$/.exec(path);
+  if (workspaceMatch) {
+    try {
+      const service = new GitWorkspaceService(getTaskStore(), (directory) => getAgentRuns().hasActiveWorkspace(directory));
+      const id = workspaceMatch[1];
+      if (!getTaskStore().getTask(id)) return jsonResponse({ error: "Task not found" }, 404);
+      if (workspaceMatch[2] && request.method === "POST") {
+        const body = await request.json() as { head?: unknown };
+        if (!body || typeof body.head !== "string") return jsonResponse({ error: "A reviewed commit is required" }, 400);
+        return jsonResponse(service.merge(id, body.head));
+      }
+      if (!workspaceMatch[2]) {
+        if (request.method === "GET") return jsonResponse(service.review(id));
+        if (request.method === "POST") return jsonResponse(service.create(id));
+        if (request.method === "DELETE") return jsonResponse(service.remove(id));
+      }
+      return jsonResponse({ error: "Method not allowed" }, 405);
+    } catch (error) { return jsonResponse({ error: String(error) }, 409); }
+  }
+  const taskTerminalMatch = /^\/api\/tasks\/([^/]+)\/terminals$/.exec(path);
+  if (taskTerminalMatch) {
+    const store = getTaskStore();
+    const task = store.getTask(taskTerminalMatch[1]);
+    if (!task) return jsonResponse({ error: "Task not found" }, 404);
+    if (request.method === "GET") return jsonResponse(store.listTerminalSessions(task.id));
+    if (request.method === "POST") {
+      try {
+        const workdir = taskWorkdir(task);
+        const lock = getTerminalLocks().reserve(store, task.id, workdir);
+        return jsonResponse(lock, 201);
+      } catch (error) { return jsonResponse({ error: String(error) }, 409); }
+    }
+    return jsonResponse({ error: "Method not allowed" }, 405);
+  }
+  if (path === "/api/terminals" && request.method === "GET") {
+    const store = getTaskStore();
+    getTerminalLocks().hydrate(store);
+    return jsonResponse(store.listTerminalSessions());
+  }
+  if (path === "/api/terminals/reconcile" && request.method === "POST") {
+    try {
+      const body = await request.json() as { liveSessionIds?: unknown };
+      if (!Array.isArray(body?.liveSessionIds) || body.liveSessionIds.length > 1000
+        || body.liveSessionIds.some((id) => typeof id !== "string" || id.length > 128)) {
+        return jsonResponse({ error: "Invalid live terminal session list" }, 400);
+      }
+      const records = getTerminalLocks().reconcile(getTaskStore(), body.liveSessionIds as string[]);
+      return jsonResponse(records);
+    } catch (error) { return jsonResponse({ error: String(error) }, 400); }
+  }
+  const runningTerminalMatch = /^\/api\/terminals\/([^/]+)\/running$/.exec(path);
+  if (runningTerminalMatch && request.method === "POST") {
+    try {
+      const store = getTaskStore();
+      const record = store.setTerminalSessionStatus(runningTerminalMatch[1], "running");
+      getTerminalLocks().hydrate(store);
+      return jsonResponse(record);
+    } catch (error) { return jsonResponse({ error: String(error) }, 409); }
+  }
+  const recoverTerminalMatch = /^\/api\/terminals\/([^/]+)\/recover$/.exec(path);
+  if (recoverTerminalMatch && request.method === "POST") {
+    try {
+      const body = await request.json() as { confirmedStopped?: unknown };
+      const record = getTaskStore().recoverTerminalSession(recoverTerminalMatch[1], body?.confirmedStopped === true);
+      getTerminalLocks().release(record.id);
+      return jsonResponse(record);
+    } catch (error) { return jsonResponse({ error: String(error) }, 409); }
+  }
+  const terminalMatch = /^\/api\/terminals\/([^/]+)$/.exec(path);
+  if (terminalMatch && request.method === "DELETE") {
+    try {
+      const store = getTaskStore();
+      const record = store.getTerminalSession(terminalMatch[1]);
+      if (!record) return jsonResponse({ error: "Terminal session not found" }, 404);
+      if (record.status === "interrupted") return jsonResponse({ error: "Confirm recovery for an interrupted terminal session" }, 409);
+      store.setTerminalSessionStatus(record.id, "stopped");
+      getTerminalLocks().release(record.id);
+      return jsonResponse({ ok: true });
+    } catch (error) { return jsonResponse({ error: String(error) }, 409); }
+  }
+  if (taskMatch && request.method === "PATCH") {
+    try {
+      if (!getTaskStore().getTask(taskMatch[1])) return jsonResponse({ error: "Task not found" }, 404);
+      const body = await request.json() as TaskPatch;
+      if (!body || Array.isArray(body) || typeof body !== "object") throw new Error("Invalid task patch");
+      return jsonResponse(getTaskStore().updateTask(taskMatch[1], body));
+    } catch (error) { return jsonResponse({ error: String(error) }, 400); }
+  }
+
+  const taskRuns = /^\/api\/tasks\/([^/]+)\/runs$/.exec(path);
+  if (taskRuns && request.method === "GET") {
+    return jsonResponse(getTaskStore().listRuns(taskRuns[1]));
+  }
+  if (taskRuns && request.method === "POST") {
+    try {
+      const body = await request.json() as { model?: unknown; followup?: unknown; provider?: unknown };
+      if (!body || (body.model !== undefined && typeof body.model !== "string")
+        || (body.provider !== undefined && (typeof body.provider !== "string" || !["opencode", "codex", "claude"].includes(body.provider)))
+        || (body.followup !== undefined && (typeof body.followup !== "string" || !body.followup.trim()))) {
+        return jsonResponse({ error: "Invalid run options" }, 400);
+      }
+      const provider = (body.provider ?? "opencode") as ProviderId;
+      const readiness = await providerStatus(provider);
+      if (!readiness.installed || readiness.auth === "signed-out") return jsonResponse({ error: readiness.message }, 409);
+      const id = getAgentRuns().start(taskRuns[1], { provider, model: body.model as string | undefined, followup: body.followup as string | undefined });
+      return jsonResponse({ id }, 201);
+    } catch (error) { return jsonResponse({ error: String(error) }, 409); }
+  }
+
+  const acknowledge = /^\/api\/sessions\/([^/]+)\/acknowledge$/.exec(path);
+  if (acknowledge && request.method === "POST") {
+    const run = getTaskStore().getRun(acknowledge[1]);
+    if (!run || run.status !== "interrupted") return jsonResponse({ error: "Run is not interrupted" }, 409);
+    const body = await request.json() as { processStopped?: boolean };
+    if (body?.processStopped !== true) return jsonResponse({ error: "Confirm the old process has stopped" }, 400);
+    getTaskStore().finishRun(run.id, "stopped", null);
+    return jsonResponse({ ok: true });
+  }
+
   if (path === "/api/sessions" && request.method === "GET") {
-    return jsonResponse(list());
+    return jsonResponse(getTaskStore().listRuns());
   }
 
   if (path === "/api/sessions" && request.method === "POST") {
@@ -86,7 +256,8 @@ async function handleApi(request: Request): Promise<Response | null> {
       return jsonResponse({ error: "project and task are required" }, 400);
     }
     try {
-      const id = startSession({ project, task, model });
+      const record = getTaskStore().createTask({ project: resolveWorkdir(project), title: task.slice(0, 120), spec: task, criteria: "Report the changes and verification results." });
+      const id = getAgentRuns().start(record.id, { model });
       return jsonResponse({ id }, 201);
     } catch (error) {
       console.error(describeError(error));
@@ -97,17 +268,38 @@ async function handleApi(request: Request): Promise<Response | null> {
   const eventsMatch = /^\/api\/sessions\/([^/]+)\/events$/.exec(path);
   if (eventsMatch && request.method === "GET") {
     const id = eventsMatch[1];
-    const after = Number(url.searchParams.get("after") ?? "0") || 0;
+    const after = Number(url.searchParams.get("after") ?? "0");
     const wait = url.searchParams.get("wait") === "1";
     return eventsPoll(id, after, wait);
   }
 
   const stopMatch = /^\/api\/sessions\/([^/]+)\/stop$/.exec(path);
   if (stopMatch && request.method === "POST") {
-    const session = get(stopMatch[1]);
+    const session = getTaskStore().getRun(stopMatch[1]);
     if (!session) return jsonResponse({ error: "not found" }, 404);
-    if (session.proc) session.proc.kill();
+    try { await getAgentRuns().stop(session.id); }
+    catch (error) { return jsonResponse({ error: String(error) }, 409); }
     return jsonResponse({ ok: true });
+  }
+
+  const followupMatch = /^\/api\/sessions\/([^/]+)\/followup$/.exec(path);
+  if (followupMatch && request.method === "POST") {
+    try {
+      if (!followupMatch[1]) return jsonResponse({ error: "not found" }, 404);
+      const body = JSON.parse(await request.text()) as { task?: unknown };
+      if (typeof body.task !== "string" || !body.task.trim()) {
+        return jsonResponse({ error: "task is required" }, 400);
+      }
+      const run = getTaskStore().getRun(followupMatch[1]);
+      if (!run) return jsonResponse({ error: "not found" }, 404);
+      const readiness = await providerStatus(run.provider);
+      if (!readiness.installed || readiness.auth === "signed-out") return jsonResponse({ error: readiness.message }, 409);
+      const id = getAgentRuns().start(run.taskId, { provider: run.provider, followup: body.task });
+      return jsonResponse({ id }, 201);
+    } catch (error) {
+      console.error(describeError(error));
+      return jsonResponse({ error: describeError(error).slice(0, 200) }, 500);
+    }
   }
 
   if (path === "/api/default-model" && request.method === "GET") {
@@ -130,6 +322,7 @@ async function handleApi(request: Request): Promise<Response | null> {
     try {
       return jsonResponse(reloadProjects());
     } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return jsonResponse([]);
       console.error(describeError(error));
       return jsonResponse({ error: "projects inventory unreadable" }, 500);
     }
@@ -208,76 +401,25 @@ async function handleApi(request: Request): Promise<Response | null> {
 
 function resolveWorkdir(projectRef: string): string {
   const looksLikePath = projectRef.includes("\\") || projectRef.includes("/");
-  if (looksLikePath) return projectRef;
-  const project = reloadProjects().find((p) => p.name === projectRef);
-  if (!project) throw new Error(`unknown project: ${projectRef}`);
-  return project.path;
-}
-
-function startSession(opts: { project: string; task: string; model?: string }): string {
-  const provider = getProvider();
-  const workdir = resolveWorkdir(opts.project);
-  const proc = provider.spawn({
-    workdir,
-    task: enhance(opts.task, workdir),
-    model: opts.model,
-  });
-  const id = crypto.randomUUID();
-  const record = {
-    id,
-    project: opts.project,
-    task: opts.task,
-    status: "running" as const,
-    proc,
-    eventCount: 0,
-    lines: [] as string[],
-    startedAt: Date.now(),
-    exitCode: null,
-  };
-  register(record);
-
-  proc.stdout.on("data", (data: Buffer) => {
-    pushLine(id, data.toString());
-  });
-  proc.stderr.on("data", () => {});
-  proc.on("close", (code) => {
-    setStatus(id, code === 0 ? "done" : "error", code);
-  });
-  proc.on("error", (error) => {
-    console.error(describeError(error));
-    setStatus(id, "error", null);
-    pushLine(id, JSON.stringify({ type: "provider_error", message: describeError(error) }));
-  });
-
-  return id;
+  const path = looksLikePath ? projectRef : reloadProjects().find((p) => p.name === projectRef)?.path;
+  if (!path || !isAbsolute(path)) throw new Error("Choose an absolute project directory");
+  const canonical = realpathSync(path);
+  if (!statSync(canonical).isDirectory()) throw new Error("Project path must be a directory");
+  return canonical;
 }
 
 const POLL_INTERVAL_MS = 500;
 const LONG_POLL_MAX_MS = 25_000;
 
 async function eventsPoll(id: string, after: number, wait: boolean): Promise<Response> {
-  const session = get(id);
-  if (!session) return jsonResponse({ error: "not found" }, 404);
-  if (!wait) {
-    return sessionSnapshot(id, after);
-  }
-
+  const store = getTaskStore();
+  if (!Number.isSafeInteger(after) || after < 0) return jsonResponse({ error: "Invalid cursor" }, 400);
+  if (!store.getRun(id)) return jsonResponse({ error: "not found" }, 404);
   const deadline = Date.now() + LONG_POLL_MAX_MS;
-  while (Date.now() < deadline) {
-    if (session.lines.length > after || session.status !== "running") {
-      return sessionSnapshot(id, after);
-    }
+  while (wait && Date.now() < deadline) {
+    const run = store.getRun(id)!;
+    if (run.eventCount > after || run.status !== "running") break;
     await sleep(POLL_INTERVAL_MS);
   }
-  return sessionSnapshot(id, after);
-}
-
-function sessionSnapshot(id: string, after: number): Response {
-  const session = get(id);
-  if (!session) return jsonResponse({ error: "not found" }, 404);
-  return jsonResponse({
-    status: session.status,
-    next: session.lines.length,
-    lines: linesSince(id, after),
-  });
+  return jsonResponse(store.events(id, after));
 }

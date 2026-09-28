@@ -1,0 +1,10 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "build": {
+    "frontendDist": "../.output/public"
+  },
+  "bundle": {
+    "targets": ["deb", "appimage"],
+    "icon": ["icons/icon.png"]
+  }
+}
