@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
-import { acknowledgeRun, launchTask, listTaskRuns, saveTask, stopSession, listProviders } from "../lib/api";
-import { runStatusLabel, providerLabels, type ProviderId, type ProviderStatus, type TaskRecord, type RunRecord } from "../lib/tasks";
+import { acknowledgeRun, launchTask, listTaskRuns, previewTaskScope, saveTask, stopSession, listProviders } from "../lib/api";
+import { runStatusLabel, providerLabels, type ProviderId, type ProviderStatus, type ScopePreview, type TaskRecord, type RunRecord } from "../lib/tasks";
 import { SessionPane } from "./SessionPane";
 import { WorkspacePanel } from "./WorkspacePanel";
 import { VerificationPanel } from "./VerificationPanel";
+import { ProjectProfilePanel } from "./ProjectProfilePanel";
 
 const inputClass = "w-full rounded-md border border-line bg-panel-2 px-3 py-2 text-sm text-text";
 const fields = (task: TaskRecord) => ({ title: task.title, spec: task.spec, criteria: task.criteria, context: task.context, draft: task.draft });
@@ -19,6 +20,22 @@ export function TaskDetail({ task, onSaved }: { task: TaskRecord; onSaved: (task
   const [checking, setChecking] = useState(false);
   const [busy, setBusy] = useState(false);
   const [workspaceBusy, setWorkspaceBusy] = useState(false);
+  const [preview, setPreview] = useState<ScopePreview | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const readiness = providers.find((item) => item.id === provider);
+  const capability = readiness?.contextBudget?.supportsProfileContext === false
+    ? "No profile context: launch would omit the profile snapshot and role instructions."
+    : readiness?.contextBudget
+      ? `Profile context supported · budget ${(readiness.contextBudget.maxPromptChars / 1000).toFixed(0)}k chars.`
+      : null;
+
+  async function loadPreview() {
+    setPreviewLoading(true); setError("");
+    try { setPreview(await previewTaskScope(task.id, provider)); }
+    catch (e) { setError(String(e)); }
+    finally { setPreviewLoading(false); }
+  }
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const storageKey = `saber.task.${task.id}`;
@@ -86,7 +103,6 @@ export function TaskDetail({ task, onSaved }: { task: TaskRecord; onSaved: (task
   const active = runs.some((run) => run.status === "running");
   const interrupted = runs.filter((run) => run.status === "interrupted");
   const selectedRun = runs.find((run) => run.id === runId);
-  const readiness = providers.find((item) => item.id === provider);
   const unavailable = checking || !readiness || !readiness.installed || readiness.auth === "signed-out";
   const workspaceUnavailable = !!task.workspace && task.workspace.state !== "ready";
   const executionPath = task.workspace?.path ?? task.project;
@@ -100,6 +116,7 @@ export function TaskDetail({ task, onSaved }: { task: TaskRecord; onSaved: (task
     {message && <p role="status" className="text-xs text-muted">{message}</p>}
     {dirty && <p className="text-xs text-muted">Unsaved edits restored locally. Save to update the task.</p>}
     <WorkspacePanel task={task} locked={busy || active || interrupted.length > 0} onSaved={onSaved} onBusyChange={setWorkspaceBusy} />
+    <ProjectProfilePanel projectRoot={task.project} />
     <VerificationPanel task={task} runs={runs} disabled={busy || workspaceBusy || active || interrupted.length > 0 || dirty} />
     <fieldset disabled={busy || workspaceBusy} className="space-y-3 disabled:opacity-60">
       <details>
@@ -122,7 +139,17 @@ export function TaskDetail({ task, onSaved }: { task: TaskRecord; onSaved: (task
         {runs.some((run) => run.provider === provider && run.nativeSessionId && run.project === executionPath) && <button disabled={unavailable || workspaceUnavailable || active || interrupted.length > 0 || !form.draft.trim()} onClick={() => void action(() => launch(true))} className="rounded border border-line px-3 py-2 text-sm disabled:opacity-40">Send follow-up</button>}
         {active && <button onClick={() => void action(async () => { await stopSession(runs.find((run) => run.status === "running")!.id); setRuns(await listTaskRuns(task.id)); })} className="rounded border border-line px-3 py-2 text-sm">Stop run</button>}
       </div>
-      <div className="flex flex-wrap items-center gap-2 text-xs text-muted"><span>{checking ? "Checking providers..." : readiness?.message ?? "Provider status unavailable."}</span><button disabled={checking} onClick={() => void refreshProviders()} className="underline disabled:opacity-40">Refresh providers</button></div>
+      <div className="flex flex-wrap items-center gap-2 text-xs text-muted"><span>{checking ? "Checking providers..." : readiness?.message ?? "Provider status unavailable."}</span><button disabled={checking} onClick={() => void refreshProviders()} className="underline disabled:opacity-40">Refresh providers</button>{capability && <span aria-label="Provider context capability">· {capability}</span>}</div>
+      <details open={previewOpen} onToggle={(e) => { setPreviewOpen((e.target as HTMLDetailsElement).open); if ((e.target as HTMLDetailsElement).open && !preview && !previewLoading) void loadPreview(); }} className="rounded border border-line p-3 text-xs text-muted">
+        <summary className="cursor-pointer">Outgoing context{preview ? ` · ${preview.totalChars.toLocaleString()} / ${preview.budget.toLocaleString()} chars` : ""}</summary>
+        <div className="mt-2 space-y-2">
+          <button disabled={previewLoading} onClick={() => void loadPreview()} className="rounded border border-line px-3 py-1 disabled:opacity-40">{previewLoading ? "Loading preview..." : preview ? "Refresh preview" : "Load preview"}</button>
+          {preview && <>
+            <ul className="space-y-1">{preview.sources.map((source) => <li key={source.name}>{source.name} · {source.chars.toLocaleString()} chars</li>)}</ul>
+            <p role="status">{preview.verdict === "ok" ? `Ready to launch: ${preview.totalChars.toLocaleString()} of ${preview.budget.toLocaleString()} chars.` : preview.verdict === "oversized" ? `Blocked: ${preview.notice}` : preview.notice}</p>
+          </>}
+        </div>
+      </details>
       {latest && latest.provider !== provider && <p className="text-xs text-muted">A new {providerLabels[provider]} run receives the saved specification and checkpoint. Native conversation history stays with its original provider.</p>}
     </fieldset>
     {interrupted.map((run) => <div key={run.id} className="rounded border border-line p-3 text-xs text-muted">

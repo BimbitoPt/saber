@@ -1,4 +1,4 @@
-import type { TaskInput, TaskPatch, TaskRecord, TaskSummary, RunRecord, ProviderId, ProviderStatus, TerminalSessionRecord, WorkspaceReview, VerificationRecord, VerificationSummary, VerificationOutcome } from "./tasks";
+import type { TaskInput, TaskPatch, TaskRecord, TaskSummary, RunRecord, ProviderId, ProviderStatus, TerminalSessionRecord, WorkspaceReview, VerificationRecord, VerificationSummary, VerificationOutcome, ProjectRecord, ProfileEntry, ProfileRevision, ScopePreview } from "./tasks";
 
 export interface Project {
   name: string;
@@ -133,6 +133,34 @@ export const recordVerification = (id: string, input: { criterionId: string; out
 export const launchTask = (id: string, options: { model?: string; followup?: string; provider?: ProviderId }) => jsonFetch<{ id: string }>(`/api/tasks/${id}/runs`, {
   method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(options),
 });
+export const previewTaskScope = (id: string, provider?: ProviderId) => jsonFetch<ScopePreview>(`/api/tasks/${id}/runs/preview`, {
+  method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ provider }),
+});
 export const acknowledgeRun = (id: string) => jsonFetch<{ ok: boolean }>(`/api/sessions/${id}/acknowledge`, {
   method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ processStopped: true }),
 });
+
+export interface ProjectProfileState {
+  project: ProjectRecord | null;
+  revisions: ProfileRevision[];
+  activeRevision: ProfileRevision | null;
+  stale: boolean;
+  changed: string[];
+}
+
+export const listProjectRecords = () => jsonFetch<ProjectRecord[]>("/api/project-records");
+export const registerProjectRecord = (path: string) => jsonFetch<ProjectRecord>("/api/project-records", {
+  method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path }),
+});
+export const getProjectProfile = (root: string) => jsonFetch<ProjectProfileState>(`/api/project-profiles?root=${encodeURIComponent(root)}`);
+export const saveProfileDraft = (root: string, entries?: ProfileEntry[], discover?: boolean) => jsonFetch<ProfileRevision>("/api/project-profiles/drafts", {
+  method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ root, entries, discover }),
+});
+export const refreshProjectProfile = (root: string) => jsonFetch<ProfileRevision>("/api/project-profiles/refresh", {
+  method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ root }),
+});
+export const editProfileDraft = (id: string, entries: ProfileEntry[]) => jsonFetch<ProfileRevision>(`/api/project-revisions/${id}`, {
+  method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ entries }),
+});
+export const approveProfileRevision = (id: string) => jsonFetch<ProfileRevision>(`/api/project-revisions/${id}/approve`, { method: "POST" });
+export const discardProfileRevision = (id: string) => jsonFetch<{ ok: boolean }>(`/api/project-revisions/${id}/discard`, { method: "POST" });

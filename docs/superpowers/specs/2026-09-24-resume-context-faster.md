@@ -2,7 +2,7 @@
 
 ## Status and authorization
 
-**Status:** Implemented and verified in the Windows browser preview, 2026-09-24. The user previously chose faster context resumption, reuse of the task checkpoint and follow-up draft, and preview on the highlighted task in the switcher.
+**Status:** Implemented and verified in the Windows browser preview, 2026-09-24. The user previously chose faster context resumption, reuse of the task checkpoint and follow-up draft, and preview on the highlighted task in the switcher. The remaining interaction gaps (pointer hover, long-text scrolling, Enter/pointer selection, focus restoration) were verified on 2026-10-06 in headless Chromium against the production server build plus a committed jsdom regression test; native Tauri-window interaction remains unverified.
 
 ## Problem and user workflow
 
@@ -42,9 +42,18 @@ Implementation is in `src/components/TaskSwitcher.tsx`. The switcher now preview
 
 | Requirement | Outcome | Evidence and limitation |
 | --- | --- | --- |
-| RTC-01 | Verified in Windows browser preview | Search-result changes and Arrow Down moved the preview with the highlighted option. Pointer hover uses the same active-index update callback but was not separately exercised. |
-| RTC-02 | Partially verified in Windows browser preview | Populated checkpoint/draft and both empty states were inspected. Long-content scrolling was not exercised with a long fixture. |
+| RTC-01 | Verified in Windows browser preview and headless Chromium | Search-result changes, Arrow Down, and pointer hover moved the preview with the highlighted option. jsdom covers hover via `mouseover` and search filtering. |
+| RTC-02 | Verified in Windows browser preview and headless Chromium | Populated checkpoint/draft, both empty states, and 200-line values were inspected. Both preview paragraphs carry bounded `max-h-32 overflow-auto` regions; measured scrollHeight 3924px against a 128px client area with the final line present. |
 | RTC-03 | Verified by browser flow and code inspection | Escape dismissed the switcher without selection; preview derives only from `results[activeIndex]`. Selection remains solely in `choose(index)`. No API calls or terminal effects were added. |
-| RTC-04 | Partially verified in Windows browser preview and packaged-server browser view | Existing listbox/dialog, search, status and arrow interaction remain; Escape closed the dialog. The rebuilt MSI's server also rendered the updated preview. Native Tauri terminal interaction, Enter selection, pointer selection and focus restoration were not exercised in this pass. |
+| RTC-04 | Verified in headless Chromium and jsdom | Search, Arrow Up/Down, Enter selection, pointer selection, Escape dismissal, search autofocus, and focus restoration to the invoking control after Escape all pass. Native Tauri terminal interaction was not exercised in this pass. |
 
 Checks passed: `bun run test -- src/lib/taskSwitcher.test.ts` (10 tests); `bunx tsc --noEmit`; `bun run build`; and `git diff --check`. The in-app browser preview and the browser view served by the updated MSI extraction showed the populated checkpoint and next-action draft. Packaged native terminal verification and clean-account installation remain pending because this environment does not expose native app-window controls. Linux and macOS UI behavior remain untested.
+
+## Follow-up verification — 2026-10-06 (Phase A1)
+
+No source changes were required; all gaps passed against the existing implementation.
+
+- New regression test `src/components/TaskSwitcher.test.tsx` (7 tests): search autofocus, arrow-driven preview, pointer-hover preview, bounded long-text regions with full 200-line content, search-result preview tracking, Enter and pointer selection through `onSelect`, and Escape dismissal without selection.
+- Headless Chromium (Playwright, system Node v24.15.0) against the production server build served from the staged checksum-verified Windows Node sidecar tree with an isolated `SABER_DATA_DIR`, 11/11 checks: Ctrl+Shift+P opens the switcher, search is focused, initial/arrows/hover/search preview tracking hold, 200-line checkpoint and draft render in bounded scroll regions (scrollHeight 3924px vs 128px client, final line present), Enter selects the hovered task, Escape dismisses without reselecting, and focus returns to the invoking Terminal button.
+- Related suites rerun: `src/components/TaskSwitcher.test.tsx` + `src/components/TaskWorkspace.test.tsx` + `src/lib/taskSwitcher.test.ts` (18 tests) pass; `bunx tsc --noEmit` and `git diff --check` pass.
+- Incidental findings, not M6 defects: `vite dev` currently cannot serve API routes (`NitroViteError: Vite environment "nitro" is unavailable`), so browser verification used the production server build; Playwright cannot launch its browser when driven from Bun (DevTools pipe handshake stalls), so the driver ran under system Node. Task creation (`POST /api/tasks`) accepts only project/title/spec/criteria; context and draft require `PATCH /api/tasks/{id}`.

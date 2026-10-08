@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { execFile, spawn } from "node:child_process";
 import type { ProviderId, ProviderStatus } from "../../lib/tasks";
 import type { SpawnOptions } from "./types";
+import { getProvider } from "./index";
 
 export function findExecutable(id: ProviderId): string | undefined {
   const executable = process.platform === "win32" ? `${id}.exe` : id;
@@ -29,9 +30,10 @@ export function spawnNative(id: ProviderId, args: string[], opts: SpawnOptions) 
 
 export async function providerStatus(id: ProviderId, locate = findExecutable): Promise<ProviderStatus> {
   const executable = locate(id);
-  if (!executable) return { id, installed: false, auth: "unknown", message: `Install ${id} and make its native executable available on PATH.` };
-  if (id === "opencode") return { id, installed: true, auth: "unknown", message: "Installed. Authentication depends on your selected OpenCode model." };
-  if (id === "codex" && process.env.CODEX_API_KEY) return { id, installed: true, auth: "unknown", message: "An API key is configured. Its validity will be checked at launch." };
+  const contextBudget = { ...getProvider(id).contextBudget };
+  if (!executable) return { id, installed: false, auth: "unknown", message: `Install ${id} and make its native executable available on PATH.`, contextBudget };
+  if (id === "opencode") return { id, installed: true, auth: "unknown", message: "Installed. Authentication depends on your selected OpenCode model.", contextBudget };
+  if (id === "codex" && process.env.CODEX_API_KEY) return { id, installed: true, auth: "unknown", message: "An API key is configured. Its validity will be checked at launch.", contextBudget };
   return new Promise((resolve) => {
     execFile(executable, id === "codex" ? ["login", "status"] : ["auth", "status"], { timeout: 8000, windowsHide: true, maxBuffer: 64 * 1024 }, (error, stdout, stderr) => {
       let auth: ProviderStatus["auth"] = "unknown";
@@ -50,7 +52,7 @@ export async function providerStatus(id: ProviderId, locate = findExecutable): P
       }
       resolve({ id, installed: true, auth, message: auth === "ready" ? "Signed in and ready."
         : auth === "signed-out" ? `Sign in from your terminal with ${id === "codex" ? "codex login" : "claude auth login"}, then refresh providers.`
-        : "Installed. Authentication could not be confirmed; launch errors will appear in run history." });
+        : "Installed. Authentication could not be confirmed; launch errors will appear in run history.", contextBudget });
     });
   });
 }

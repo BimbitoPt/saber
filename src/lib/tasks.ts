@@ -1,11 +1,16 @@
 export type RunStatus = "running" | "done" | "stopped" | "error" | "interrupted";
 export type ProviderId = "opencode" | "codex" | "claude";
 export const providerLabels: Record<ProviderId, string> = { opencode: "OpenCode", codex: "Codex", claude: "Claude Code" };
+export interface ContextBudget {
+  maxPromptChars: number;
+  supportsProfileContext: boolean;
+}
 export interface ProviderStatus {
   id: ProviderId;
   installed: boolean;
   auth: "ready" | "signed-out" | "unknown";
   message: string;
+  contextBudget?: ContextBudget;
 }
 
 export interface TaskRecord {
@@ -86,6 +91,11 @@ export interface RunRecord {
   spec: string;
   criteria: string;
   context: string;
+  profileRevisionId?: string;
+  roleId?: string;
+  roleInstructions?: string;
+  contextSources?: string[];
+  contextNotice?: string;
   status: RunStatus;
   eventCount: number;
   startedAt: number;
@@ -93,9 +103,59 @@ export interface RunRecord {
   exitCode: number | null;
 }
 
+export interface RunContextCapture {
+  profileRevisionId?: string;
+  roleId?: string;
+  roleInstructions?: string;
+  contextSources?: string[];
+  contextNotice?: string;
+}
+
 export interface TaskSummary extends TaskRecord {
   latestRun?: RunRecord;
   verificationSummary?: VerificationSummary;
+}
+
+export interface ProjectRecord {
+  root: string;
+  displayName: string;
+  createdAt: number;
+  activeRevisionId?: string;
+}
+
+export type ProfileEntryOrigin = "repository" | "user";
+export interface ProfileEntry {
+  key: string;
+  origin: ProfileEntryOrigin;
+  sourcePath?: string;
+  author?: string;
+  content: string;
+}
+
+export type ProfileRevisionState = "draft" | "approved";
+export interface ProfileRevision {
+  id: string;
+  projectRoot: string;
+  entries: ProfileEntry[];
+  sourceHashes: Record<string, string>;
+  state: ProfileRevisionState;
+  createdAt: number;
+  updatedAt: number;
+  approvedAt?: number;
+}
+
+export interface ScopePreviewSource {
+  name: string;
+  chars: number;
+}
+
+export interface ScopePreview {
+  provider: ProviderId;
+  sources: ScopePreviewSource[];
+  totalChars: number;
+  budget: number;
+  verdict: "ok" | "oversized" | "unsupported" | "no-profile";
+  notice?: string;
 }
 
 export const runStatusLabel: Record<RunStatus, string> = {

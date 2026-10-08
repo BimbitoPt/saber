@@ -7,9 +7,32 @@ import { TaskStore, getTaskStore } from "./taskStore";
 import { enhance } from "./promptEnhancer";
 import { workspacesOverlap } from "./workspaceIdentity";
 import { parseProviderEvent } from "./providers/events";
-import type { ProviderId } from "../lib/tasks";
+import type { ProviderId, TaskRecord } from "../lib/tasks";
 import { taskWorkdir } from "./gitWorkspaces";
+import { resolveProjectSource } from "./projectProfiles";
 import { getTerminalLocks, type TerminalLocks } from "./terminalLocks";
+
+export const DEFAULT_ROLE_ID = "default";
+export const DEFAULT_ROLE_INSTRUCTIONS = "Act as the project's implementing agent: follow the profile conventions and stack, verify each acceptance criterion with real checks, and report verification per criterion without merging or deploying.";
+
+export interface AssembledScope {
+  prompt: string;
+  model?: string;
+  profileRevisionId?: string;
+  roleId: string;
+  roleInstructions: string;
+  contextSources: string[];
+  contextNotice?: string;
+}
+
+export interface ScopePreview {
+  provider: ProviderId;
+  sources: Array<{ name: string; chars: number }>;
+  totalChars: number;
+  budget: number;
+  verdict: "ok" | "oversized" | "unsupported" | "no-profile";
+  notice?: string;
+}
 
 export class AgentRuns {
   private active = new Map<string, ChildProcess>();
@@ -28,16 +51,11 @@ export class AgentRuns {
     const adapter = this.provider(providerId);
     const previous = this.store.listRuns(taskId).find((run) => run.provider === providerId && run.project === workdir && run.nativeSessionId);
     if (options.followup && !previous) throw new Error(`No ${providerId} session was captured for this task. Start a new run with this provider first.`);
-    const prompt = [
-      `Task: ${task.title}`, `Specification revision: ${task.revision}`, task.spec,
-      `Acceptance criteria:\n${task.criteria}`, task.context ? `Saved context:\n${task.context}` : "",
-      options.followup ? `Follow-up:\n${options.followup}` : "Implement the specification and report verification against each acceptance criterion.",
-    ].filter(Boolean).join("\n\n");
     const model = options.model?.trim() || (options.followup ? previous?.model : undefined);
-    const submittedPrompt = this.enhancePrompt(prompt, workdir);
-    const run = this.store.createRun(taskId, submittedPrompt, model, providerId, workdir);
+    const scope = this.assembleScope(task, workdir, adapter, model, options.followup);
+    const run = this.store.createRun(task.id, scope.prompt, model, providerId, workdir, scope);
     try {
-      const child = adapter.spawn({ workdir, task: submittedPrompt, model,
+      const child = adapter.spawn({ workdir, task: scope.prompt, model,
         session: options.followup ? previous?.nativeSessionId : undefined });
       this.active.set(run.id, child);
       const decoder = new StringDecoder("utf8");
@@ -83,6 +101,69 @@ export class AgentRuns {
       throw error;
     }
     return run.id;
+  }
+
+  private profileRevisionFor(task: TaskRecord) {
+    const projectRoot = task.workspace?.source ?? task.project;
+    const project = this.store.getProject(projectRoot);
+    const activeId = project?.activeRevisionId;
+    if (!activeId) return { revision: undefined };
+    return { revision: this.store.getProfileRevision(activeId) };
+  }
+
+  private scopeParts(task: TaskRecord, followup?: string) {
+    const { revision } = this.profileRevisionFor(task);
+    const parts: Array<{ name: string; text: string }> = [
+      { name: "task title and specification", text: [`Task: ${task.title}`, `Specification revision: ${task.revision}`, task.spec, `Acceptance criteria:\n${task.criteria}`].join("\n\n") },
+    ];
+    if (task.context) parts.push({ name: "saved context", text: `Saved context:\n${task.context}` });
+    if (revision) {
+      parts.push({ name: `project profile revision ${revision.id.slice(0, 8)}`, text: [`Project profile (revision ${revision.id}, ${revision.entries.length} entries):`, ...revision.entries.map((entry) => `${entry.key} (${entry.origin}):\n${entry.content}`)].join("\n\n") });
+    }
+    parts.push({ name: "default role instructions", text: `Role: ${DEFAULT_ROLE_ID}\n${DEFAULT_ROLE_INSTRUCTIONS}` });
+    parts.push({ name: followup ? "follow-up" : "task instruction", text: followup ? `Follow-up:\n${followup}` : "Implement the specification and report verification against each acceptance criterion." });
+    return { revision, parts };
+  }
+
+  assembleScope(task: TaskRecord, workdir: string, adapter: AgentProvider, model?: string, followup?: string): AssembledScope {
+    const { revision, parts } = this.scopeParts(task, followup);
+    const prompt = this.enhancePrompt(parts.map((part) => part.text).filter(Boolean).join("\n\n"), workdir);
+    if (!adapter.contextBudget.supportsProfileContext) {
+      const omitted = revision ? ["project profile snapshot", "role instructions"] : ["role instructions"];
+      throw new Error(`${adapter.name} does not support profile context. Omitted sources: ${omitted.join(", ")}. No run was started.`);
+    }
+    const total = prompt.length;
+    const budget = adapter.contextBudget.maxPromptChars;
+    if (total > budget) {
+      const largest = [...parts.map((part) => ({ name: part.name, chars: part.text.length }))].sort((a, b) => b.chars - a.chars)[0];
+      throw new Error(`Prompt exceeds the ${adapter.name} context budget (${total} > ${budget} chars); largest source: ${largest.name} (${largest.chars} chars). Reduce that source and retry. No run was started.`);
+    }
+    return {
+      prompt, model,
+      profileRevisionId: revision?.id, roleId: DEFAULT_ROLE_ID, roleInstructions: DEFAULT_ROLE_INSTRUCTIONS,
+      contextSources: parts.map((part) => part.name),
+      contextNotice: revision ? undefined : "No approved project profile; this run launches without profile context.",
+    };
+  }
+
+  preview(taskId: string, providerId: ProviderId = "opencode"): ScopePreview {
+    const task = this.store.getTask(taskId);
+    if (!task) throw new Error("Task not found");
+    const adapter = this.provider(providerId);
+    const workdir = taskWorkdir(task);
+    const { revision, parts } = this.scopeParts(task);
+    const prompt = this.enhancePrompt(parts.map((part) => part.text).filter(Boolean).join("\n\n"), workdir);
+    const sources = parts.map((part) => ({ name: part.name, chars: part.text.length }));
+    const budget = adapter.contextBudget.maxPromptChars;
+    if (!adapter.contextBudget.supportsProfileContext) {
+      return { provider: providerId, sources, totalChars: prompt.length, budget, verdict: "unsupported", notice: `${adapter.name} does not support profile context; launch would omit the profile snapshot and role instructions.` };
+    }
+    if (prompt.length > budget) {
+      const largest = [...sources].sort((a, b) => b.chars - a.chars)[0];
+      return { provider: providerId, sources, totalChars: prompt.length, budget, verdict: "oversized", notice: `Prompt exceeds the budget; largest source: ${largest.name} (${largest.chars} chars).` };
+    }
+    if (!revision) return { provider: providerId, sources, totalChars: prompt.length, budget, verdict: "no-profile", notice: "No approved project profile; the run would launch without profile context." };
+    return { provider: providerId, sources, totalChars: prompt.length, budget, verdict: "ok" };
   }
 
   async stop(id: string) {

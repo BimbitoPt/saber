@@ -13,5 +13,5 @@ export function codexArgs(opts: SpawnOptions): string[] {
 }
 
 export function codexProvider(): AgentProvider {
-  return { name: "codex", args: codexArgs, spawn: (opts) => spawnNative("codex", codexArgs(opts), opts) };
+  return { name: "codex", contextBudget: { maxPromptChars: 200_000, supportsProfileContext: true }, args: codexArgs, spawn: (opts) => spawnNative("codex", codexArgs(opts), opts) };
 }

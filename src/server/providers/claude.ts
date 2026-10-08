@@ -10,5 +10,5 @@ export function claudeArgs(opts: SpawnOptions): string[] {
 }
 
 export function claudeProvider(): AgentProvider {
-  return { name: "claude", args: claudeArgs, spawn: (opts) => spawnNative("claude", claudeArgs(opts), opts) };
+  return { name: "claude", contextBudget: { maxPromptChars: 200_000, supportsProfileContext: true }, args: claudeArgs, spawn: (opts) => spawnNative("claude", claudeArgs(opts), opts) };
 }

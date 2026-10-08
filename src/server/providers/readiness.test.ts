@@ -21,7 +21,7 @@ describe("provider readiness", () => {
   it("reports Codex login without returning auth output", async () => {
     vi.stubEnv("CODEX_API_KEY", "");
     probe("", "Logged in using ChatGPT");
-    expect(await providerStatus("codex", () => "/codex")).toEqual({ id: "codex", installed: true, auth: "ready", message: "Signed in and ready." });
+    expect(await providerStatus("codex", () => "/codex")).toEqual({ id: "codex", installed: true, auth: "ready", message: "Signed in and ready.", contextBudget: { maxPromptChars: 200_000, supportsProfileContext: true } });
     expect(execFile).toHaveBeenCalledWith("/codex", ["login", "status"], expect.objectContaining({ timeout: 8000, maxBuffer: 65536, windowsHide: true }), expect.any(Function));
   });
   it("reports Claude signed-out status without exposing account data", async () => {

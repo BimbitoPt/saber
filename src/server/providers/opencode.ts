@@ -33,11 +33,13 @@ export function buildArgs(opts: SpawnOptions): string[] {
 
 export function opencodeProvider(): {
   name: string;
+  contextBudget: { maxPromptChars: number; supportsProfileContext: boolean };
   args: typeof buildArgs;
   spawn(opts: SpawnOptions): ChildProcessByStdio<null, Readable, Readable>;
 } {
   return {
     name: "opencode",
+    contextBudget: { maxPromptChars: 200_000, supportsProfileContext: true },
     args: buildArgs,
     spawn(opts) {
       return spawn(OPENCODE_EXE, buildArgs(opts), {

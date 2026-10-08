@@ -12,6 +12,11 @@ function workspaceRoot(path: string) {
   }
 }
 
+export function canonicalizeProjectRoot(path: string) {
+  const canonical = existsSync(path) ? realpathSync(path) : resolve(path);
+  return process.platform === "win32" ? canonical.toLowerCase() : canonical;
+}
+
 export function workspacesOverlap(first: string, second: string) {
   const key = (path: string) => {
     const root = workspaceRoot(path);

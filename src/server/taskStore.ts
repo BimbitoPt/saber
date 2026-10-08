@@ -2,8 +2,8 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
-import type { TaskInput, TaskPatch, TaskRecord, TaskSummary, RunRecord, RunStatus, ProviderId, TaskWorkspaceRecord, TerminalSessionRecord, TerminalSessionStatus, VerificationRecord } from "../lib/tasks";
-import { workspacesOverlap } from "./workspaceIdentity";
+import type { TaskInput, TaskPatch, TaskRecord, TaskSummary, RunRecord, RunStatus, ProviderId, TaskWorkspaceRecord, TerminalSessionRecord, TerminalSessionStatus, VerificationRecord, ProjectRecord, ProfileRevision, RunContextCapture } from "../lib/tasks";
+import { canonicalizeProjectRoot, workspacesOverlap } from "./workspaceIdentity";
 import { summarizeVerification } from "../lib/verification";
 
 export class TaskStore {
@@ -34,6 +34,13 @@ export class TaskStore {
         id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id), data TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS terminal_sessions_task ON terminal_sessions(task_id);
+      CREATE TABLE IF NOT EXISTS projects (
+        root TEXT PRIMARY KEY, data TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS profile_revisions (
+        id TEXT PRIMARY KEY, project_root TEXT NOT NULL REFERENCES projects(root) ON DELETE CASCADE, data TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS profile_revisions_project ON profile_revisions(project_root);
     `);
     for (const run of this.listRuns()) {
       if (run.status === "running") this.finishRun(run.id, "interrupted", null);
@@ -172,6 +179,104 @@ export class TaskStore {
     return this.setTerminalSessionStatus(id, "stopped");
   }
 
+  private normalizeProject(raw: ProjectRecord): ProjectRecord {
+    return {
+      root: raw.root,
+      displayName: raw.displayName ?? raw.root,
+      createdAt: raw.createdAt ?? Date.now(),
+      ...(raw.activeRevisionId !== undefined ? { activeRevisionId: raw.activeRevisionId } : {}),
+    };
+  }
+
+  private normalizeRevision(raw: ProfileRevision): ProfileRevision {
+    return {
+      id: raw.id,
+      projectRoot: raw.projectRoot,
+      entries: Array.isArray(raw.entries) ? raw.entries : [],
+      sourceHashes: raw.sourceHashes && typeof raw.sourceHashes === "object" ? raw.sourceHashes : {},
+      state: raw.state === "approved" ? "approved" : "draft",
+      createdAt: raw.createdAt ?? Date.now(),
+      updatedAt: raw.updatedAt ?? raw.createdAt ?? Date.now(),
+      ...(raw.approvedAt !== undefined ? { approvedAt: raw.approvedAt } : {}),
+    };
+  }
+
+  registerProject(root: string, displayName?: string): ProjectRecord {
+    if (typeof root !== "string" || !root.trim()) throw new Error("Project root is required");
+    const canonical = canonicalizeProjectRoot(root);
+    const existing = this.getProject(canonical);
+    if (existing) return existing;
+    const record = this.normalizeProject({
+      root: canonical,
+      displayName: displayName?.trim() || canonical,
+      createdAt: Date.now(),
+    } as ProjectRecord);
+    this.db.prepare("INSERT INTO projects VALUES (?, ?)").run(record.root, JSON.stringify(record));
+    return record;
+  }
+
+  getProject(root: string): ProjectRecord | undefined {
+    const canonical = canonicalizeProjectRoot(root);
+    const row = this.db.prepare("SELECT data FROM projects WHERE root = ?").get(canonical) as { data: string } | undefined;
+    if (!row) return undefined;
+    return this.normalizeProject(JSON.parse(row.data) as ProjectRecord);
+  }
+
+  listProjects(): ProjectRecord[] {
+    return (this.db.prepare("SELECT data FROM projects").all() as Array<{ data: string }>)
+      .map((row) => this.normalizeProject(JSON.parse(row.data) as ProjectRecord))
+      .sort((a, b) => a.createdAt - b.createdAt);
+  }
+
+  setProjectActiveRevision(root: string, revisionId: string | undefined): ProjectRecord {
+    const canonical = canonicalizeProjectRoot(root);
+    const project = this.getProject(canonical);
+    if (!project) throw new Error("Project not found");
+    if (revisionId !== undefined) {
+      const revision = this.getProfileRevision(revisionId);
+      if (!revision) throw new Error("Revision not found");
+      if (canonicalizeProjectRoot(revision.projectRoot) !== project.root) throw new Error("Revision belongs to another project");
+    }
+    const updated = this.normalizeProject({ ...project, activeRevisionId: revisionId } as ProjectRecord);
+    if (revisionId === undefined) delete updated.activeRevisionId;
+    this.db.prepare("UPDATE projects SET data = ? WHERE root = ?").run(JSON.stringify(updated), project.root);
+    return updated;
+  }
+
+  createProfileRevision(revision: ProfileRevision): ProfileRevision {
+    const canonicalRoot = canonicalizeProjectRoot(revision.projectRoot);
+    if (!this.getProject(canonicalRoot)) throw new Error("Project not found");
+    const normalized = this.normalizeRevision({ ...revision, projectRoot: canonicalRoot });
+    this.db.prepare("INSERT INTO profile_revisions VALUES (?, ?, ?)").run(normalized.id, canonicalRoot, JSON.stringify(normalized));
+    return normalized;
+  }
+
+  getProfileRevision(id: string): ProfileRevision | undefined {
+    const row = this.db.prepare("SELECT data FROM profile_revisions WHERE id = ?").get(id) as { data: string } | undefined;
+    if (!row) return undefined;
+    return this.normalizeRevision(JSON.parse(row.data) as ProfileRevision);
+  }
+
+  listProfileRevisions(projectRoot: string): ProfileRevision[] {
+    const canonical = canonicalizeProjectRoot(projectRoot);
+    return (this.db.prepare("SELECT data FROM profile_revisions WHERE project_root = ? ORDER BY rowid ASC").all(canonical) as Array<{ data: string }>)
+      .map((row) => this.normalizeRevision(JSON.parse(row.data) as ProfileRevision));
+  }
+
+  writeProfileRevision(revision: ProfileRevision): ProfileRevision {
+    const existing = this.getProfileRevision(revision.id);
+    if (!existing) throw new Error("Revision not found");
+    const canonicalRoot = canonicalizeProjectRoot(revision.projectRoot);
+    if (canonicalRoot !== canonicalizeProjectRoot(existing.projectRoot)) throw new Error("Revision project cannot change");
+    const normalized = this.normalizeRevision({ ...revision, projectRoot: canonicalRoot });
+    this.db.prepare("UPDATE profile_revisions SET data = ? WHERE id = ?").run(JSON.stringify(normalized), normalized.id);
+    return normalized;
+  }
+
+  deleteProfileRevision(id: string) {
+    this.db.prepare("DELETE FROM profile_revisions WHERE id = ?").run(id);
+  }
+
   listRuns(taskId?: string): RunRecord[] {
     const rows = taskId
       ? this.db.prepare("SELECT data FROM runs WHERE task_id = ? ORDER BY rowid DESC").all(taskId)
@@ -179,7 +284,7 @@ export class TaskStore {
     return rows.map((row) => this.decode<RunRecord>(row)!);
   }
 
-  createRun(taskId: string, prompt: string, model?: string, provider: ProviderId = "opencode", workdir?: string): RunRecord {
+  createRun(taskId: string, prompt: string, model?: string, provider: ProviderId = "opencode", workdir?: string, capture: RunContextCapture = {}): RunRecord {
     const task = this.getTask(taskId);
     if (!task) throw new Error("Task not found");
     const project = workdir ?? task.workspace?.path ?? task.project;
@@ -192,7 +297,11 @@ export class TaskStore {
     const run: RunRecord = {
       id: crypto.randomUUID(), taskId, project, task: prompt,
       provider, model, specRevision: task.revision, spec: task.spec,
-      criteria: task.criteria, context: task.context, status: "running", eventCount: 0,
+      criteria: task.criteria, context: task.context,
+      profileRevisionId: capture.profileRevisionId, roleId: capture.roleId,
+      roleInstructions: capture.roleInstructions, contextSources: capture.contextSources,
+      contextNotice: capture.contextNotice,
+      status: "running", eventCount: 0,
       startedAt: Date.now(), exitCode: null,
     };
     this.db.prepare("INSERT INTO runs VALUES (?, ?, ?)").run(run.id, taskId, JSON.stringify(run));

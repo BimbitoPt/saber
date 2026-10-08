@@ -54,7 +54,7 @@ describe("isolated task workspaces", { timeout: 30000 }, () => {
     const first = service.create(task.id);
     const second = service.create(makeTask().id);
     const spawn = vi.fn<AgentProvider["spawn"]>(() => Object.assign(new EventEmitter(), { stdout: new PassThrough(), stderr: new PassThrough() }) as unknown as ReturnType<AgentProvider["spawn"]>);
-    const runs = new AgentRuns(store, () => ({ name: "codex", args: () => [], spawn }), (prompt) => prompt);
+    const runs = new AgentRuns(store, () => ({ name: "codex", contextBudget: { maxPromptChars: 200_000, supportsProfileContext: true }, args: () => [], spawn }), (prompt) => prompt);
     const a = runs.start(first.id, { provider: "codex" });
     const b = runs.start(second.id, { provider: "codex" });
     expect(store.getRun(a)?.project).toBe(first.workspace!.path);
@@ -73,7 +73,7 @@ describe("isolated task workspaces", { timeout: 30000 }, () => {
     store.finishRun(old.id, "done", 0);
     service.create(task.id);
     const spawn = vi.fn<AgentProvider["spawn"]>();
-    const runs = new AgentRuns(store, () => ({ name: "codex", args: () => [], spawn }), (prompt) => prompt);
+    const runs = new AgentRuns(store, () => ({ name: "codex", contextBudget: { maxPromptChars: 200_000, supportsProfileContext: true }, args: () => [], spawn }), (prompt) => prompt);
     expect(() => runs.start(task.id, { provider: "codex", followup: "continue" })).toThrow("No codex session");
     expect(spawn).not.toHaveBeenCalled();
     expect(store.getRun(old.id)?.project).toBe(task.project);

@@ -1,13 +1,21 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { TaskStore } from "./taskStore";
 import { AgentRuns } from "./agentRuns";
+import { ProjectProfiles } from "./projectProfiles";
 import { TerminalLocks } from "./terminalLocks";
 import type { AgentProvider } from "./providers/types";
 
 const stores: TaskStore[] = [];
 afterEach(() => { stores.splice(0).forEach((store) => store.close()); });
+
+function adapter(spawn: AgentProvider["spawn"]): AgentProvider {
+  return { name: "opencode", contextBudget: { maxPromptChars: 200_000, supportsProfileContext: true }, args: () => [], spawn };
+}
 
 function setup() {
   const store = new TaskStore(":memory:");
@@ -15,7 +23,7 @@ function setup() {
   const task = store.createTask({ project: "C:/saber-lifecycle-test", title: "Test", spec: "Do the work", criteria: "Prove it" });
   const child = Object.assign(new EventEmitter(), { stdout: new PassThrough(), stderr: new PassThrough(), kill: vi.fn(() => true) });
   const spawn = vi.fn<AgentProvider["spawn"]>(() => child as unknown as ReturnType<AgentProvider["spawn"]>);
-  const service = new AgentRuns(store, () => ({ name: "opencode", args: () => [], spawn }), (prompt) => `${prompt}\nVerify http://localhost:9999`);
+  const service = new AgentRuns(store, () => adapter(spawn), (prompt) => `${prompt}\nVerify http://localhost:9999`);
   return { store, task, child, spawn, service };
 }
 
@@ -102,5 +110,92 @@ describe("agent runs", () => {
     child.emit("close", 0);
     expect(store.getRun(id)?.status).toBe("error");
     expect(JSON.parse(store.events(id, 0).lines[0]).raw).toContain("not signed in");
+  });
+
+  it("captures profile and role snapshots that survive later profile edits", () => {
+    const { store, task, child, service } = setup();
+    store.registerProject(task.project);
+    const profiles = new ProjectProfiles(store);
+    const first = profiles.approveRevision(profiles.saveDraft(task.project, [
+      { key: "stack", origin: "user", author: "qa", content: "first profile" },
+    ]).id);
+    const firstRun = service.start(task.id);
+    const captured = store.getRun(firstRun)!;
+    expect(captured.profileRevisionId).toBe(first.id);
+    expect(captured.roleId).toBe("default");
+    expect(captured.roleInstructions).toContain("implementing agent");
+    expect(captured.contextSources).toContain("default role instructions");
+    expect(captured.task).toContain("first profile");
+    child.emit("close", 0);
+
+    const second = profiles.approveRevision(profiles.saveDraft(task.project, [
+      { key: "stack", origin: "user", author: "qa", content: "second profile" },
+    ]).id);
+    const secondRun = service.start(task.id);
+    expect(second).not.toBe(firstRun);
+    expect(store.getRun(secondRun)?.profileRevisionId).toBe(second.id);
+    expect(store.getRun(secondRun)?.task).toContain("second profile");
+    expect(store.getRun(firstRun)?.task).toContain("first profile");
+    expect(store.getRun(firstRun)?.task).not.toContain("second profile");
+  });
+
+  it("blocks oversized prompts before launch and names the over-budget source", () => {
+    const { store, task, spawn } = setup();
+    const tiny = (name = "opencode"): AgentProvider => ({
+      name, contextBudget: { maxPromptChars: 10, supportsProfileContext: true }, args: () => [], spawn,
+    });
+    const service = new AgentRuns(store, tiny, (prompt) => prompt);
+    expect(() => service.start(task.id)).toThrow("context budget");
+    expect(() => service.start(task.id)).toThrow("largest source");
+    expect(spawn).not.toHaveBeenCalled();
+    expect(store.listRuns(task.id)).toHaveLength(0);
+    const preview = service.preview(task.id);
+    expect(preview.verdict).toBe("oversized");
+    expect(preview.notice).toContain("largest source");
+  });
+
+  it("is explicit when an adapter cannot carry profile context", () => {
+    const { store, task, spawn } = setup();
+    const unsupported = (): AgentProvider => ({
+      name: "legacy", contextBudget: { maxPromptChars: 200_000, supportsProfileContext: false }, args: () => [], spawn,
+    });
+    const service = new AgentRuns(store, unsupported, (prompt) => prompt);
+    expect(() => service.start(task.id)).toThrow("does not support profile context");
+    expect(spawn).not.toHaveBeenCalled();
+    const preview = service.preview(task.id);
+    expect(preview.verdict).toBe("unsupported");
+    expect(preview.notice).toContain("omit");
+  });
+
+  it("keeps secret-bearing files out of the assembled prompt and preview", () => {
+    const directory = mkdtempSync(join(tmpdir(), "saber-profile-hygiene-"));
+    try {
+      writeFileSync(join(directory, "AGENTS.md"), "Stack: Bun.");
+      writeFileSync(join(directory, ".env"), "SECRET=top-secret-value");
+      writeFileSync(join(directory, "secrets.json"), JSON.stringify({ token: "secret-token-value" }));
+      const store = new TaskStore(":memory:");
+      stores.push(store);
+      const task = store.createTask({ project: directory, title: "Test", spec: "Do the work", criteria: "Prove it" });
+      const profiles = new ProjectProfiles(store);
+      profiles.registerProject(directory);
+      const approved = profiles.approveRevision(profiles.discoverDraft(directory).id);
+      expect(approved.entries.map((entry) => entry.key)).toEqual(["AGENTS.md"]);
+      const child = Object.assign(new EventEmitter(), { stdout: new PassThrough(), stderr: new PassThrough(), kill: vi.fn(() => true) });
+      const spawn = vi.fn<AgentProvider["spawn"]>(() => child as unknown as ReturnType<AgentProvider["spawn"]>);
+      const service = new AgentRuns(store, () => adapter(spawn), (prompt) => prompt);
+      const id = service.start(task.id);
+      const run = store.getRun(id)!;
+      expect(run.task).toContain("Stack: Bun.");
+      expect(run.task).not.toContain("top-secret-value");
+      expect(run.task).not.toContain("secret-token-value");
+      const preview = service.preview(task.id);
+      expect(preview.verdict).toBe("ok");
+      expect(JSON.stringify(preview)).not.toContain("top-secret-value");
+      expect(JSON.stringify(preview)).not.toContain("secret-token-value");
+      child.emit("close", 0);
+      expect(store.getRun(id)?.status).toBe("done");
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 });

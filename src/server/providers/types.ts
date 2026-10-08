@@ -1,5 +1,6 @@
 import type { ChildProcessByStdio } from "node:child_process";
 import type { Readable } from "node:stream";
+import type { ContextBudget } from "../../lib/tasks";
 
 export interface SpawnOptions {
   workdir: string;
@@ -11,6 +12,7 @@ export interface SpawnOptions {
 
 export interface AgentProvider {
   name: string;
+  contextBudget: ContextBudget;
   args(opts: SpawnOptions): string[];
   spawn(opts: SpawnOptions): ChildProcessByStdio<null, Readable, Readable>;
 }
