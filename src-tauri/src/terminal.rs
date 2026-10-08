@@ -239,7 +239,25 @@ fn validate_start(session_id: &str, cwd: PathBuf, cols: u16, rows: u16) -> Resul
     if !cwd.is_dir() {
         return Err("Terminal working directory is not a directory".to_string());
     }
-    Ok(cwd)
+    Ok(strip_verbatim_prefix(cwd))
+}
+
+fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
+    #[cfg(windows)]
+    {
+        let text = path.to_string_lossy();
+        if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+            return PathBuf::from(format!(r"\\{rest}"));
+        }
+        if let Some(rest) = text.strip_prefix(r"\\?\") {
+            return PathBuf::from(rest);
+        }
+        path
+    }
+    #[cfg(not(windows))]
+    {
+        path
+    }
 }
 
 #[cfg(windows)]
@@ -402,6 +420,22 @@ mod tests {
         reader_thread.join().expect("join PTY reader");
         drop(child);
         std::fs::remove_dir_all(directory).expect("remove temporary directory");
+    }
+
+    #[test]
+    fn terminal_start_strips_the_windows_verbatim_prefix() {
+        assert_eq!(
+            super::strip_verbatim_prefix(PathBuf::from(r"\\?\C:\work\repo")),
+            PathBuf::from(if cfg!(windows) { r"C:\work\repo" } else { r"\\?\C:\work\repo" }),
+        );
+        assert_eq!(
+            super::strip_verbatim_prefix(PathBuf::from(r"\\?\UNC\host\share")),
+            PathBuf::from(if cfg!(windows) { r"\\host\share" } else { r"\\?\UNC\host\share" }),
+        );
+        assert_eq!(
+            super::strip_verbatim_prefix(PathBuf::from(if cfg!(windows) { r"C:\work\repo" } else { "/tmp/repo" })),
+            PathBuf::from(if cfg!(windows) { r"C:\work\repo" } else { "/tmp/repo" }),
+        );
     }
 
     #[test]
