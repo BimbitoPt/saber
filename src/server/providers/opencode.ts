@@ -3,7 +3,7 @@ import type { ChildProcessByStdio } from "node:child_process";
 import type { Readable } from "node:stream";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import type { SpawnOptions } from "./types";
+import type { AgentProvider, SpawnOptions } from "./types";
 
 const SHIM_DIR_CANDIDATES = [
   join(process.env["APPDATA"] ?? "", "npm", "node_modules", "opencode-ai", "bin", "opencode.exe"),
@@ -31,15 +31,11 @@ export function buildArgs(opts: SpawnOptions): string[] {
   return args;
 }
 
-export function opencodeProvider(): {
-  name: string;
-  contextBudget: { maxPromptChars: number; supportsProfileContext: boolean };
-  args: typeof buildArgs;
-  spawn(opts: SpawnOptions): ChildProcessByStdio<null, Readable, Readable>;
-} {
+export function opencodeProvider(): AgentProvider {
   return {
     name: "opencode",
     contextBudget: { maxPromptChars: 200_000, supportsProfileContext: true },
+    readOnly: { supported: false, reason: "opencode run exposes no read-only or sandbox flags; permissions live in user config, so Saber cannot enforce read-only." },
     args: buildArgs,
     spawn(opts) {
       return spawn(OPENCODE_EXE, buildArgs(opts), {

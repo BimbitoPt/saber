@@ -5,6 +5,8 @@ import { SessionPane } from "./SessionPane";
 import { WorkspacePanel } from "./WorkspacePanel";
 import { VerificationPanel } from "./VerificationPanel";
 import { ProjectProfilePanel } from "./ProjectProfilePanel";
+import { SpecialistTeamPicker } from "./SpecialistTeamPicker";
+import { TeamReviewList } from "./TeamReviewList";
 
 const inputClass = "w-full rounded-md border border-line bg-panel-2 px-3 py-2 text-sm text-text";
 const fields = (task: TaskRecord) => ({ title: task.title, spec: task.spec, criteria: task.criteria, context: task.context, draft: task.draft });
@@ -140,6 +142,7 @@ export function TaskDetail({ task, onSaved }: { task: TaskRecord; onSaved: (task
         {active && <button onClick={() => void action(async () => { await stopSession(runs.find((run) => run.status === "running")!.id); setRuns(await listTaskRuns(task.id)); })} className="rounded border border-line px-3 py-2 text-sm">Stop run</button>}
       </div>
       <div className="flex flex-wrap items-center gap-2 text-xs text-muted"><span>{checking ? "Checking providers..." : readiness?.message ?? "Provider status unavailable."}</span><button disabled={checking} onClick={() => void refreshProviders()} className="underline disabled:opacity-40">Refresh providers</button>{capability && <span aria-label="Provider context capability">· {capability}</span>}</div>
+      <SpecialistTeamPicker taskId={task.id} projectRoot={task.project} defaultProvider={provider} onLaunched={() => { void listTaskRuns(task.id).then(setRuns); }} />
       <details open={previewOpen} onToggle={(e) => { setPreviewOpen((e.target as HTMLDetailsElement).open); if ((e.target as HTMLDetailsElement).open && !preview && !previewLoading) void loadPreview(); }} className="rounded border border-line p-3 text-xs text-muted">
         <summary className="cursor-pointer">Outgoing context{preview ? ` · ${preview.totalChars.toLocaleString()} / ${preview.budget.toLocaleString()} chars` : ""}</summary>
         <div className="mt-2 space-y-2">
@@ -163,5 +166,6 @@ export function TaskDetail({ task, onSaved }: { task: TaskRecord; onSaved: (task
       {selectedRun && <details className="text-xs text-muted"><summary className="cursor-pointer">Scope captured for this run</summary><p className="mt-2 break-all">Working directory: {selectedRun.project}</p><pre className="mt-2 whitespace-pre-wrap rounded bg-panel p-3 font-sans">{selectedRun.task}</pre></details>}
       <div className="h-80 min-h-0 rounded border border-line"><SessionPane sessionId={runId} /></div>
     </div>}
+    <TeamReviewList taskId={task.id} runs={runs} onChanged={() => { void listTaskRuns(task.id).then(setRuns); }} />
   </div>;
 }

@@ -1,4 +1,4 @@
-import type { TaskInput, TaskPatch, TaskRecord, TaskSummary, RunRecord, ProviderId, ProviderStatus, TerminalSessionRecord, WorkspaceReview, VerificationRecord, VerificationSummary, VerificationOutcome, ProjectRecord, ProfileEntry, ProfileRevision, ScopePreview } from "./tasks";
+import type { TaskInput, TaskPatch, TaskRecord, TaskSummary, RunRecord, ProviderId, ProviderStatus, TerminalSessionRecord, WorkspaceReview, VerificationRecord, VerificationSummary, VerificationOutcome, ProjectRecord, ProfileEntry, ProfileRevision, ScopePreview, SpecialistRole, TeamPlan, TeamRecord, TeamMemberSelection } from "./tasks";
 
 export interface Project {
   name: string;
@@ -164,3 +164,23 @@ export const editProfileDraft = (id: string, entries: ProfileEntry[]) => jsonFet
 });
 export const approveProfileRevision = (id: string) => jsonFetch<ProfileRevision>(`/api/project-revisions/${id}/approve`, { method: "POST" });
 export const discardProfileRevision = (id: string) => jsonFetch<{ ok: boolean }>(`/api/project-revisions/${id}/discard`, { method: "POST" });
+
+export const listRoles = (root: string) => jsonFetch<SpecialistRole[]>(`/api/roles?root=${encodeURIComponent(root)}`);
+export const createRole = (input: { root: string; id: string; displayName: string; instructions: string; write: boolean; providers: ProviderId[] }) => jsonFetch<SpecialistRole>("/api/roles", {
+  method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input),
+});
+export const updateRole = (root: string, id: string, patch: { displayName?: string; instructions?: string; write?: boolean; providers?: ProviderId[]; enabled?: boolean }) => jsonFetch<SpecialistRole>(`/api/roles/${encodeURIComponent(id)}?root=${encodeURIComponent(root)}`, {
+  method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(patch),
+});
+
+export const listTeams = (taskId: string) => jsonFetch<TeamRecord[]>(`/api/tasks/${taskId}/teams`);
+export const planTeam = (taskId: string, members: TeamMemberSelection[]) => jsonFetch<TeamPlan>(`/api/tasks/${taskId}/teams/plan`, {
+  method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ members }),
+});
+export const launchTeam = (taskId: string, members: TeamMemberSelection[]) => jsonFetch<TeamRecord>(`/api/tasks/${taskId}/teams`, {
+  method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ members }),
+});
+export const reviewRunWorktree = (taskId: string, runId: string) => jsonFetch<WorkspaceReview>(`/api/tasks/${taskId}/runs/${runId}/review`);
+export const mergeRunWorktree = (taskId: string, runId: string, head: string) => jsonFetch<{ ok: boolean; head: string; cleanedUp: boolean }>(`/api/tasks/${taskId}/runs/${runId}/merge`, {
+  method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ head }),
+});

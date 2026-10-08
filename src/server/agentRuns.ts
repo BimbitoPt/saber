@@ -1,6 +1,7 @@
 import { StringDecoder } from "node:string_decoder";
 import { execFile } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
+import { statSync } from "node:fs";
 import type { AgentProvider } from "./providers/types";
 import { getProvider } from "./providers";
 import { TaskStore, getTaskStore } from "./taskStore";
@@ -14,6 +15,14 @@ import { getTerminalLocks, type TerminalLocks } from "./terminalLocks";
 
 export const DEFAULT_ROLE_ID = "default";
 export const DEFAULT_ROLE_INSTRUCTIONS = "Act as the project's implementing agent: follow the profile conventions and stack, verify each acceptance criterion with real checks, and report verification per criterion without merging or deploying.";
+
+function isExistingDirectory(path: string) {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
 
 export interface AssembledScope {
   prompt: string;
@@ -34,17 +43,33 @@ export interface ScopePreview {
   notice?: string;
 }
 
+export interface MemberRole {
+  id: string;
+  instructions: string;
+}
+
+export interface StartOptions {
+  model?: string;
+  followup?: string;
+  provider?: ProviderId;
+  role?: MemberRole;
+  workdir?: string;
+  readOnly?: boolean;
+  runId?: string;
+}
+
 export class AgentRuns {
   private active = new Map<string, ChildProcess>();
   private stopping = new Set<string>();
 
   constructor(private store: TaskStore, private provider: (name?: ProviderId) => AgentProvider = getProvider, private enhancePrompt = enhance, private terminalLocks: TerminalLocks = getTerminalLocks()) {}
 
-  start(taskId: string, options: { model?: string; followup?: string; provider?: ProviderId } = {}) {
+  start(taskId: string, options: StartOptions = {}) {
     this.terminalLocks.hydrate(this.store);
     const task = this.store.getTask(taskId);
     if (!task) throw new Error("Task not found");
-    const workdir = taskWorkdir(task);
+    const workdir = options.workdir ?? taskWorkdir(task);
+    if (options.workdir && !isExistingDirectory(options.workdir)) throw new Error("Run workspace is not a directory");
     if (this.hasActiveWorkspace(workdir)) throw new Error("The previous process is still closing. Wait before launching again.");
     if (this.terminalLocks.hasActiveWorkspace(workdir)) throw new Error("An interactive terminal owns this workspace. Close it before launching an agent run.");
     const providerId = options.provider ?? "opencode";
@@ -52,10 +77,11 @@ export class AgentRuns {
     const previous = this.store.listRuns(taskId).find((run) => run.provider === providerId && run.project === workdir && run.nativeSessionId);
     if (options.followup && !previous) throw new Error(`No ${providerId} session was captured for this task. Start a new run with this provider first.`);
     const model = options.model?.trim() || (options.followup ? previous?.model : undefined);
-    const scope = this.assembleScope(task, workdir, adapter, model, options.followup);
-    const run = this.store.createRun(task.id, scope.prompt, model, providerId, workdir, scope);
+    const role = options.role ?? { id: DEFAULT_ROLE_ID, instructions: DEFAULT_ROLE_INSTRUCTIONS };
+    const scope = this.assembleScope(task, workdir, adapter, model, options.followup, role);
+    const run = this.store.createRun(task.id, scope.prompt, model, providerId, workdir, scope, options.runId);
     try {
-      const child = adapter.spawn({ workdir, task: scope.prompt, model,
+      const child = adapter.spawn({ workdir, task: scope.prompt, model, readOnly: options.readOnly,
         session: options.followup ? previous?.nativeSessionId : undefined });
       this.active.set(run.id, child);
       const decoder = new StringDecoder("utf8");
@@ -111,7 +137,7 @@ export class AgentRuns {
     return { revision: this.store.getProfileRevision(activeId) };
   }
 
-  private scopeParts(task: TaskRecord, followup?: string) {
+  private scopeParts(task: TaskRecord, role: MemberRole, followup?: string) {
     const { revision } = this.profileRevisionFor(task);
     const parts: Array<{ name: string; text: string }> = [
       { name: "task title and specification", text: [`Task: ${task.title}`, `Specification revision: ${task.revision}`, task.spec, `Acceptance criteria:\n${task.criteria}`].join("\n\n") },
@@ -120,13 +146,13 @@ export class AgentRuns {
     if (revision) {
       parts.push({ name: `project profile revision ${revision.id.slice(0, 8)}`, text: [`Project profile (revision ${revision.id}, ${revision.entries.length} entries):`, ...revision.entries.map((entry) => `${entry.key} (${entry.origin}):\n${entry.content}`)].join("\n\n") });
     }
-    parts.push({ name: "default role instructions", text: `Role: ${DEFAULT_ROLE_ID}\n${DEFAULT_ROLE_INSTRUCTIONS}` });
+    parts.push({ name: `${role.id} role instructions`, text: `Role: ${role.id}\n${role.instructions}` });
     parts.push({ name: followup ? "follow-up" : "task instruction", text: followup ? `Follow-up:\n${followup}` : "Implement the specification and report verification against each acceptance criterion." });
     return { revision, parts };
   }
 
-  assembleScope(task: TaskRecord, workdir: string, adapter: AgentProvider, model?: string, followup?: string): AssembledScope {
-    const { revision, parts } = this.scopeParts(task, followup);
+  assembleScope(task: TaskRecord, workdir: string, adapter: AgentProvider, model?: string, followup?: string, role: MemberRole = { id: DEFAULT_ROLE_ID, instructions: DEFAULT_ROLE_INSTRUCTIONS }): AssembledScope {
+    const { revision, parts } = this.scopeParts(task, role, followup);
     const prompt = this.enhancePrompt(parts.map((part) => part.text).filter(Boolean).join("\n\n"), workdir);
     if (!adapter.contextBudget.supportsProfileContext) {
       const omitted = revision ? ["project profile snapshot", "role instructions"] : ["role instructions"];
@@ -140,7 +166,7 @@ export class AgentRuns {
     }
     return {
       prompt, model,
-      profileRevisionId: revision?.id, roleId: DEFAULT_ROLE_ID, roleInstructions: DEFAULT_ROLE_INSTRUCTIONS,
+      profileRevisionId: revision?.id, roleId: role.id, roleInstructions: role.instructions,
       contextSources: parts.map((part) => part.name),
       contextNotice: revision ? undefined : "No approved project profile; this run launches without profile context.",
     };
@@ -151,7 +177,7 @@ export class AgentRuns {
     if (!task) throw new Error("Task not found");
     const adapter = this.provider(providerId);
     const workdir = taskWorkdir(task);
-    const { revision, parts } = this.scopeParts(task);
+    const { revision, parts } = this.scopeParts(task, { id: DEFAULT_ROLE_ID, instructions: DEFAULT_ROLE_INSTRUCTIONS });
     const prompt = this.enhancePrompt(parts.map((part) => part.text).filter(Boolean).join("\n\n"), workdir);
     const sources = parts.map((part) => ({ name: part.name, chars: part.text.length }));
     const budget = adapter.contextBudget.maxPromptChars;

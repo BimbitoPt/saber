@@ -2,7 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
-import type { TaskInput, TaskPatch, TaskRecord, TaskSummary, RunRecord, RunStatus, ProviderId, TaskWorkspaceRecord, TerminalSessionRecord, TerminalSessionStatus, VerificationRecord, ProjectRecord, ProfileRevision, RunContextCapture } from "../lib/tasks";
+import type { TaskInput, TaskPatch, TaskRecord, TaskSummary, RunRecord, RunStatus, ProviderId, TaskWorkspaceRecord, TerminalSessionRecord, TerminalSessionStatus, VerificationRecord, ProjectRecord, ProfileRevision, RunContextCapture, SpecialistRole, TeamRecord, RunWorktreeRecord } from "../lib/tasks";
 import { canonicalizeProjectRoot, workspacesOverlap } from "./workspaceIdentity";
 import { summarizeVerification } from "../lib/verification";
 
@@ -41,6 +41,18 @@ export class TaskStore {
         id TEXT PRIMARY KEY, project_root TEXT NOT NULL REFERENCES projects(root) ON DELETE CASCADE, data TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS profile_revisions_project ON profile_revisions(project_root);
+      CREATE TABLE IF NOT EXISTS roles (
+        project_root TEXT NOT NULL REFERENCES projects(root) ON DELETE CASCADE, id TEXT NOT NULL, data TEXT NOT NULL,
+        PRIMARY KEY (project_root, id)
+      );
+      CREATE TABLE IF NOT EXISTS run_worktrees (
+        run_id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id), data TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS run_worktrees_task ON run_worktrees(task_id);
+      CREATE TABLE IF NOT EXISTS teams (
+        id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id), data TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS teams_task ON teams(task_id);
     `);
     for (const run of this.listRuns()) {
       if (run.status === "running") this.finishRun(run.id, "interrupted", null);
@@ -277,6 +289,97 @@ export class TaskStore {
     this.db.prepare("DELETE FROM profile_revisions WHERE id = ?").run(id);
   }
 
+  private normalizeRole(raw: SpecialistRole): SpecialistRole {
+    return {
+      id: raw.id,
+      projectRoot: raw.projectRoot,
+      displayName: raw.displayName ?? raw.id,
+      instructions: raw.instructions ?? "",
+      write: raw.write === true,
+      providers: Array.isArray(raw.providers) ? raw.providers : [],
+      ...(raw.basedOnProfileRevisionId !== undefined ? { basedOnProfileRevisionId: raw.basedOnProfileRevisionId } : {}),
+      enabled: raw.enabled !== false,
+      createdAt: raw.createdAt ?? Date.now(),
+      updatedAt: raw.updatedAt ?? raw.createdAt ?? Date.now(),
+    };
+  }
+
+  listRoles(projectRoot: string): SpecialistRole[] {
+    const canonical = canonicalizeProjectRoot(projectRoot);
+    return (this.db.prepare("SELECT data FROM roles WHERE project_root = ? ORDER BY rowid ASC").all(canonical) as Array<{ data: string }>)
+      .map((row) => this.normalizeRole(JSON.parse(row.data) as SpecialistRole));
+  }
+
+  getRole(projectRoot: string, id: string): SpecialistRole | undefined {
+    const canonical = canonicalizeProjectRoot(projectRoot);
+    const row = this.db.prepare("SELECT data FROM roles WHERE project_root = ? AND id = ?").get(canonical, id) as { data: string } | undefined;
+    if (!row) return undefined;
+    return this.normalizeRole(JSON.parse(row.data) as SpecialistRole);
+  }
+
+  createRole(record: SpecialistRole): SpecialistRole {
+    const canonicalRoot = canonicalizeProjectRoot(record.projectRoot);
+    if (!this.getProject(canonicalRoot)) throw new Error("Project not found");
+    if (this.getRole(canonicalRoot, record.id)) throw new Error(`Role already exists: ${record.id}`);
+    const normalized = this.normalizeRole({ ...record, projectRoot: canonicalRoot });
+    this.db.prepare("INSERT INTO roles VALUES (?, ?, ?)").run(canonicalRoot, normalized.id, JSON.stringify(normalized));
+    return normalized;
+  }
+
+  writeRole(record: SpecialistRole): SpecialistRole {
+    const canonicalRoot = canonicalizeProjectRoot(record.projectRoot);
+    if (!this.getRole(canonicalRoot, record.id)) throw new Error("Role not found");
+    const normalized = this.normalizeRole({ ...record, projectRoot: canonicalRoot });
+    this.db.prepare("UPDATE roles SET data = ? WHERE project_root = ? AND id = ?").run(JSON.stringify(normalized), canonicalRoot, normalized.id);
+    return normalized;
+  }
+
+  private normalizeRunWorktree(raw: RunWorktreeRecord): RunWorktreeRecord {
+    return {
+      runId: raw.runId, taskId: raw.taskId, path: raw.path, source: raw.source,
+      sourceBranch: raw.sourceBranch,
+      baseCommit: raw.baseCommit, branch: raw.branch,
+      state: raw.state === "removed" ? "removed" : "ready",
+    };
+  }
+
+  createRunWorktree(record: RunWorktreeRecord): RunWorktreeRecord {
+    if (!this.getTask(record.taskId)) throw new Error("Task not found");
+    const normalized = this.normalizeRunWorktree(record);
+    this.db.prepare("INSERT INTO run_worktrees VALUES (?, ?, ?)").run(normalized.runId, normalized.taskId, JSON.stringify(normalized));
+    return normalized;
+  }
+
+  getRunWorktree(runId: string): RunWorktreeRecord | undefined {
+    const row = this.db.prepare("SELECT data FROM run_worktrees WHERE run_id = ?").get(runId) as { data: string } | undefined;
+    if (!row) return undefined;
+    return this.normalizeRunWorktree(JSON.parse(row.data) as RunWorktreeRecord);
+  }
+
+  listRunWorktrees(taskId: string): RunWorktreeRecord[] {
+    return (this.db.prepare("SELECT data FROM run_worktrees WHERE task_id = ? ORDER BY rowid ASC").all(taskId) as Array<{ data: string }>)
+      .map((row) => this.normalizeRunWorktree(JSON.parse(row.data) as RunWorktreeRecord));
+  }
+
+  writeRunWorktree(record: RunWorktreeRecord): RunWorktreeRecord {
+    if (!this.getRunWorktree(record.runId)) throw new Error("Run worktree not found");
+    const normalized = this.normalizeRunWorktree(record);
+    this.db.prepare("UPDATE run_worktrees SET data = ? WHERE run_id = ?").run(JSON.stringify(normalized), normalized.runId);
+    return normalized;
+  }
+
+  createTeam(taskId: string, members: TeamRecord["members"]): TeamRecord {
+    if (!this.getTask(taskId)) throw new Error("Task not found");
+    const team: TeamRecord = { id: crypto.randomUUID(), taskId, members, createdAt: Date.now() };
+    this.db.prepare("INSERT INTO teams VALUES (?, ?, ?)").run(team.id, taskId, JSON.stringify(team));
+    return team;
+  }
+
+  listTeams(taskId: string): TeamRecord[] {
+    return (this.db.prepare("SELECT data FROM teams WHERE task_id = ? ORDER BY rowid ASC").all(taskId) as Array<{ data: string }>)
+      .map((row) => JSON.parse(row.data) as TeamRecord);
+  }
+
   listRuns(taskId?: string): RunRecord[] {
     const rows = taskId
       ? this.db.prepare("SELECT data FROM runs WHERE task_id = ? ORDER BY rowid DESC").all(taskId)
@@ -284,7 +387,7 @@ export class TaskStore {
     return rows.map((row) => this.decode<RunRecord>(row)!);
   }
 
-  createRun(taskId: string, prompt: string, model?: string, provider: ProviderId = "opencode", workdir?: string, capture: RunContextCapture = {}): RunRecord {
+  createRun(taskId: string, prompt: string, model?: string, provider: ProviderId = "opencode", workdir?: string, capture: RunContextCapture = {}, runId?: string): RunRecord {
     const task = this.getTask(taskId);
     if (!task) throw new Error("Task not found");
     const project = workdir ?? task.workspace?.path ?? task.project;
@@ -295,7 +398,7 @@ export class TaskStore {
       ? "An interrupted run owns this workspace. Confirm its old process has stopped before retrying."
       : "Another run is already using this workspace. Wait or stop it before launching.");
     const run: RunRecord = {
-      id: crypto.randomUUID(), taskId, project, task: prompt,
+      id: runId ?? crypto.randomUUID(), taskId, project, task: prompt,
       provider, model, specRevision: task.revision, spec: task.spec,
       criteria: task.criteria, context: task.context,
       profileRevisionId: capture.profileRevisionId, roleId: capture.roleId,

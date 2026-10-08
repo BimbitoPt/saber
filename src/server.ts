@@ -15,6 +15,7 @@ import { startDevServer, listDevServers, stopDevServer } from "./server/devServe
 import { goto as browserGoto, screenshot as browserShot, act as browserAct, currentUrl } from "./server/browser";
 import { handleApiV1 } from "./server/apiV1";
 import { ProjectProfiles } from "./server/projectProfiles";
+import { getSpecialistTeams } from "./server/specialistTeams";
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
@@ -40,7 +41,7 @@ function projectProfiles() {
 function profileError(error: unknown) {
   const message = String(error);
   const status = /not found/i.test(message) ? 404
-    : /only draft|active revision|already has|belongs to another|cannot change/i.test(message) ? 409 : 400;
+    : /only draft|active revision|already|belongs to another|cannot change|interrupted|interactive terminal|at most|must include|stale|local changes|branch changed/i.test(message) ? 409 : 400;
   return jsonResponse({ error: message }, status);
 }
 
@@ -235,6 +236,21 @@ async function handleApi(request: Request): Promise<Response | null> {
   if (taskRuns && request.method === "GET") {
     return jsonResponse(getTaskStore().listRuns(taskRuns[1]));
   }
+  const runReviewMatch = /^\/api\/tasks\/([^/]+)\/runs\/([^/]+)\/(review|merge)$/.exec(path);
+  if (runReviewMatch && runReviewMatch[3] === "review" && request.method === "GET") {
+    try {
+      const service = new GitWorkspaceService(getTaskStore(), (directory) => getAgentRuns().hasActiveWorkspace(directory));
+      return jsonResponse(service.reviewRunWorktree(runReviewMatch[1], runReviewMatch[2]));
+    } catch (error) { return profileError(error); }
+  }
+  if (runReviewMatch && runReviewMatch[3] === "merge" && request.method === "POST") {
+    try {
+      const body = await request.json() as { head?: unknown };
+      if (!body || typeof body.head !== "string") return jsonResponse({ error: "A reviewed commit is required" }, 400);
+      const service = new GitWorkspaceService(getTaskStore(), (directory) => getAgentRuns().hasActiveWorkspace(directory));
+      return jsonResponse(service.mergeRunWorktree(runReviewMatch[1], runReviewMatch[2], body.head));
+    } catch (error) { return profileError(error); }
+  }
   if (taskRuns && request.method === "POST") {
     try {
       const body = await request.json() as { model?: unknown; followup?: unknown; provider?: unknown };
@@ -412,6 +428,59 @@ async function handleApi(request: Request): Promise<Response | null> {
         return jsonResponse(profiles.editDraft(id, body.entries));
       }
       return jsonResponse({ error: "Method not allowed" }, 405);
+    } catch (error) { return profileError(error); }
+  }
+
+  const teams = getSpecialistTeams();
+  if (path === "/api/roles" && request.method === "GET") {
+    try {
+      const root = url.searchParams.get("root");
+      if (!root) return jsonResponse({ error: "Project root is required" }, 400);
+      return jsonResponse(teams.listRoles(root));
+    } catch (error) { return profileError(error); }
+  }
+
+  if (path === "/api/roles" && request.method === "POST") {
+    try {
+      const body = await request.json() as { root?: unknown; id?: unknown; displayName?: unknown; instructions?: unknown; write?: unknown; providers?: unknown };
+      if (!body || typeof body.root !== "string") return jsonResponse({ error: "Project root is required" }, 400);
+      return jsonResponse(teams.createRole(body.root, body), 201);
+    } catch (error) { return profileError(error); }
+  }
+
+  const roleMatch = /^\/api\/roles\/([^/]+)$/.exec(path);
+  if (roleMatch && request.method === "PATCH") {
+    try {
+      const root = url.searchParams.get("root");
+      if (!root) return jsonResponse({ error: "Project root is required" }, 400);
+      const body = await request.json() as { displayName?: unknown; instructions?: unknown; write?: unknown; providers?: unknown; enabled?: unknown };
+      if (!body || typeof body !== "object" || Array.isArray(body)) return jsonResponse({ error: "Invalid role patch" }, 400);
+      return jsonResponse(teams.updateRole(root, roleMatch[1], body));
+    } catch (error) { return profileError(error); }
+  }
+
+  const teamMatch = /^\/api\/tasks\/([^/]+)\/teams(\/plan)?$/.exec(path);
+  if (teamMatch && !teamMatch[2] && request.method === "GET") {
+    return jsonResponse(getTaskStore().listTeams(teamMatch[1]));
+  }
+  if (teamMatch && teamMatch[2] === "/plan" && request.method === "POST") {
+    try {
+      const body = await request.json() as { members?: unknown };
+      if (!body || !Array.isArray(body.members)) return jsonResponse({ error: "Team members are required" }, 400);
+      return jsonResponse(getSpecialistTeams().planTeam(teamMatch[1], body.members));
+    } catch (error) { return profileError(error); }
+  }
+  if (teamMatch && !teamMatch[2] && request.method === "POST") {
+    try {
+      const body = await request.json() as { members?: unknown };
+      if (!body || !Array.isArray(body.members)) return jsonResponse({ error: "Team members are required" }, 400);
+      const planner = getSpecialistTeams();
+      const plan = planner.planTeam(teamMatch[1], body.members);
+      for (const member of plan.members) {
+        const readiness = await providerStatus(member.provider);
+        if (!readiness.installed || readiness.auth === "signed-out") return jsonResponse({ error: readiness.message }, 409);
+      }
+      return jsonResponse(planner.launchTeam(teamMatch[1], body.members), 201);
     } catch (error) { return profileError(error); }
   }
 

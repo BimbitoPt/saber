@@ -5,6 +5,11 @@ export interface ContextBudget {
   maxPromptChars: number;
   supportsProfileContext: boolean;
 }
+export interface ReadOnlySupport {
+  supported: boolean;
+  args?: string[];
+  reason?: string;
+}
 export interface ProviderStatus {
   id: ProviderId;
   installed: boolean;
@@ -156,6 +161,60 @@ export interface ScopePreview {
   budget: number;
   verdict: "ok" | "oversized" | "unsupported" | "no-profile";
   notice?: string;
+}
+
+export interface SpecialistRole {
+  id: string;
+  projectRoot: string;
+  displayName: string;
+  instructions: string;
+  write: boolean;
+  providers: ProviderId[];
+  basedOnProfileRevisionId?: string;
+  enabled: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface TeamMemberSelection {
+  role: string;
+  provider: ProviderId;
+  model?: string;
+}
+
+export interface TeamMemberRef extends TeamMemberSelection {
+  runId: string;
+}
+
+export interface TeamRecord {
+  id: string;
+  taskId: string;
+  members: TeamMemberRef[];
+  createdAt: number;
+}
+
+export interface RunWorktreeRecord {
+  runId: string;
+  taskId: string;
+  path: string;
+  source: string;
+  sourceBranch: string;
+  baseCommit: string;
+  branch: string;
+  state: "ready" | "removed";
+}
+
+export interface PlannedTeamMember {
+  role: SpecialistRole;
+  provider: ProviderId;
+  model?: string;
+  readOnly: boolean;
+}
+
+export interface TeamPlan {
+  taskId: string;
+  source: string;
+  members: PlannedTeamMember[];
 }
 
 export const runStatusLabel: Record<RunStatus, string> = {

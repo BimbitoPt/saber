@@ -104,6 +104,21 @@ Verification: full Vitest 21 files / 117 tests, `test:terminal` (2 Rust + 17 Vit
 
 Remaining gaps: specialist teams slice; native Tauri-window checks; authenticated Claude smoke (no account); clean-account/VM install.
 
+## Slice 2 completion evidence (2026-10-08)
+
+Bounded opt-in specialist teams (PAC-05–PAC-08). Slice-1 receipts reused without reopening.
+
+- PAC-05: roles with ID, instructions, write flag, supported providers, and basis profile revision; built-in implementer (write, all providers) and reviewer (read-only, claude) seeded per project; custom role CRUD; four-member ceiling; implementer required when any member writes; no launch on task creation or without explicit confirmation. Tests cover seeding, validation, and history stability.
+- PAC-06: per-member managed worktrees under `worktrees/<taskId>/runs/<runId>` with provider-neutral branches, reserved atomically before any spawn with rollback creating nothing on reservation failure; partial spawn failures stay visible as member outcomes. Adapter read-only declarations verified from installed CLIs (opencode: no flags, unsupported; claude: plan mode with Edit/Write/NotebookEdit denied; codex: unverified, unsupported); read-only members run read-only invocations on separate paths, never shared writable paths; unsupported pairs report unavailable. Overlap semantics confirmed: distinct git roots never overlap.
+- PAC-07: team groups independent runs with per-member provider/role/revision identity, outcome, changed files, checks, and blockers; successful members stay ready-for-review; per-member merge reuses identical ff-only, clean-tree, reviewed-head guards directly into source with sequential merges, explicit rebase guidance on non-ff, and guarded cleanup reporting. Nothing merges or verifies implicitly.
+- PAC-08: restart reconciles members as interrupted with team records intact; relaunch blocked (409, zero duplicates) while members run or are interrupted; acknowledge-then-relaunch succeeds with exactly one added run; UI A-B-A restores selection with the team following the task.
+
+Verification: full Vitest 24 files / 139 tests, `test:terminal` (2 Rust + 17 Vitest), `cargo test` 8/8, `tsc`, production build with checksum-verified sidecar staging. Headless Chromium closeout 14/14 with two real opencode runs to `done`, plus the full interrupt-reconcile-recover cycle proven against the production server build.
+
+Kill-mechanics note (2026-10-08, not a defect): when the server process dies, provider children die on the broken output pipe within seconds (verified: no orphans survive), so restart reconciliation to `interrupted` is honest — never falsely running or completed. Under violent kills, close handlers may record `error` instead of `interrupted`; this is cosmetic (error runs hold no locks and block nothing) and needs no fix unless it appears in normal app-close usage.
+
+Remaining gaps: native Tauri-window checks; authenticated Claude smoke (no account); clean-account/VM install; codex read-only verification (CLI not installed).
+
 ## Design self-review
 
 - Scope is one coherent vertical slice across project profile, immutable context capture, and opt-in bounded specialists; no cloud service or independent editor is introduced.

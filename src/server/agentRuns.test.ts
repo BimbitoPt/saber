@@ -14,7 +14,7 @@ const stores: TaskStore[] = [];
 afterEach(() => { stores.splice(0).forEach((store) => store.close()); });
 
 function adapter(spawn: AgentProvider["spawn"]): AgentProvider {
-  return { name: "opencode", contextBudget: { maxPromptChars: 200_000, supportsProfileContext: true }, args: () => [], spawn };
+  return { name: "opencode", contextBudget: { maxPromptChars: 200_000, supportsProfileContext: true }, readOnly: { supported: true, args: [] }, args: () => [], spawn };
 }
 
 function setup() {
@@ -142,7 +142,7 @@ describe("agent runs", () => {
   it("blocks oversized prompts before launch and names the over-budget source", () => {
     const { store, task, spawn } = setup();
     const tiny = (name = "opencode"): AgentProvider => ({
-      name, contextBudget: { maxPromptChars: 10, supportsProfileContext: true }, args: () => [], spawn,
+      name, contextBudget: { maxPromptChars: 10, supportsProfileContext: true }, readOnly: { supported: true, args: [] }, args: () => [], spawn,
     });
     const service = new AgentRuns(store, tiny, (prompt) => prompt);
     expect(() => service.start(task.id)).toThrow("context budget");
@@ -157,7 +157,7 @@ describe("agent runs", () => {
   it("is explicit when an adapter cannot carry profile context", () => {
     const { store, task, spawn } = setup();
     const unsupported = (): AgentProvider => ({
-      name: "legacy", contextBudget: { maxPromptChars: 200_000, supportsProfileContext: false }, args: () => [], spawn,
+      name: "legacy", contextBudget: { maxPromptChars: 200_000, supportsProfileContext: false }, readOnly: { supported: false, reason: "test stub" }, args: () => [], spawn,
     });
     const service = new AgentRuns(store, unsupported, (prompt) => prompt);
     expect(() => service.start(task.id)).toThrow("does not support profile context");

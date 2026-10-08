@@ -13,5 +13,5 @@ export function codexArgs(opts: SpawnOptions): string[] {
 }
 
 export function codexProvider(): AgentProvider {
-  return { name: "codex", contextBudget: { maxPromptChars: 200_000, supportsProfileContext: true }, args: codexArgs, spawn: (opts) => spawnNative("codex", codexArgs(opts), opts) };
+  return { name: "codex", contextBudget: { maxPromptChars: 200_000, supportsProfileContext: true }, readOnly: { supported: false, reason: "Codex read-only flags are unverified because the CLI is not installed; re-verify before enabling." }, args: codexArgs, spawn: (opts) => spawnNative("codex", codexArgs(opts), opts) };
 }

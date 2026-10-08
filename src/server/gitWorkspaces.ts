@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import type { TaskRecord, TaskWorkspaceRecord, WorkspaceReview } from "../lib/tasks";
+import type { TaskRecord, TaskWorkspaceRecord, WorkspaceReview, RunWorktreeRecord } from "../lib/tasks";
 import { TaskStore } from "./taskStore";
 import { workspacesOverlap } from "./workspaceIdentity";
 
@@ -37,6 +37,17 @@ export function taskWorkdir(task: TaskRecord) {
   if (!task.workspace) return task.project;
   assertWorkspace(task.workspace);
   return task.workspace.path;
+}
+
+export function taskSourceRoot(task: TaskRecord) {
+  if (task.workspace) {
+    if (task.workspace.state !== "ready") throw new Error("Task workspace is not ready. Create or recover it before launching.");
+    assertWorkspace(task.workspace);
+    return task.workspace.source;
+  }
+  const source = realpathSync(git(task.project, ["rev-parse", "--show-toplevel"]));
+  if (canonical(source) !== canonical(task.project)) throw new Error("Use the Git checkout root as the task project to create a worktree");
+  return source;
 }
 
 export class GitWorkspaceService {
@@ -136,5 +147,96 @@ export class GitWorkspaceService {
       if (registered.split("\n").some((line) => line.startsWith("worktree ") && canonical(line.slice(9)) === canonical(workspace.path))) throw new Error("Missing workspace is still registered. Restore it before removing it.");
     }
     return this.store.setWorkspace(id, { ...workspace, state: "removed" });
+  }
+
+  runWorktreePath(taskId: string, runId: string) {
+    return canonical(join(this.root, taskId, "runs", runId));
+  }
+
+  private assertRunWorktree(record: RunWorktreeRecord) {
+    if (canonical(git(record.path, ["rev-parse", "--show-toplevel"])) !== canonical(record.path)) throw new Error("Workspace root changed");
+    if (git(record.path, ["symbolic-ref", "--short", "HEAD"]) !== record.branch) throw new Error("Workspace branch changed. Restore the task branch first.");
+    if (canonical(git(record.path, ["rev-parse", "--path-format=absolute", "--git-common-dir"])) !== canonical(git(record.source, ["rev-parse", "--path-format=absolute", "--git-common-dir"]))) throw new Error("Workspace repository changed");
+  }
+
+  createRunWorktree(taskId: string, runId: string) {
+    const task = this.task(taskId);
+    const source = taskSourceRoot(task);
+    this.idle([task.project, source]);
+    const baseCommit = git(source, ["rev-parse", "--verify", "HEAD^{commit}"]);
+    const sourceBranch = git(source, ["symbolic-ref", "--short", "HEAD"]);
+    const branch = `saber/${task.id.slice(0, 8)}/${runId.slice(0, 8)}`;
+    const path = this.runWorktreePath(task.id, runId);
+    mkdirSync(join(this.root, task.id, "runs"), { recursive: true });
+    if (!existsSync(path)) {
+      const registered = git(source, ["worktree", "list", "--porcelain"]);
+      if (registered.split("\n").some((line) => line.startsWith("worktree ") && canonical(line.slice(9)) === canonical(path))) {
+        throw new Error("A registered workspace is missing. Restore it or repair its Git registration before retrying.");
+      }
+      const existing = git(source, ["branch", "--list", branch]);
+      if (existing) {
+        if (git(source, ["rev-parse", branch]) !== baseCommit) throw new Error("Recovery branch has changes. Restore its worktree manually to preserve them.");
+        git(source, ["worktree", "add", "--", path, branch]);
+      } else {
+        git(source, ["worktree", "add", "-b", branch, "--", path, baseCommit]);
+      }
+    }
+    const record: RunWorktreeRecord = { runId, taskId: task.id, path, source, sourceBranch, baseCommit, branch, state: "ready" };
+    this.assertRunWorktree(record);
+    return this.store.createRunWorktree(record);
+  }
+
+  removeRunWorktree(taskId: string, runId: string) {
+    const task = this.task(taskId);
+    const record = this.store.getRunWorktree(runId);
+    if (!record || record.taskId !== task.id) throw new Error("Run worktree not found");
+    if (canonical(record.path) !== this.runWorktreePath(task.id, runId)) throw new Error("Workspace is outside its managed location");
+    if (record.state === "removed") return record;
+    this.idle([record.path]);
+    if (existsSync(record.path)) {
+      this.assertRunWorktree(record);
+      if (git(record.path, ["status", "--porcelain", "--untracked-files=all", "--ignored"])) throw new Error("Workspace contains local or ignored files. Preserve them before removing it.");
+      git(record.source, ["worktree", "remove", "--", record.path]);
+    } else {
+      const registered = git(record.source, ["worktree", "list", "--porcelain"]);
+      if (registered.split("\n").some((line) => line.startsWith("worktree ") && canonical(line.slice(9)) === canonical(record.path))) throw new Error("Missing workspace is still registered. Restore it before removing it.");
+    }
+    return this.store.writeRunWorktree({ ...record, state: "removed" });
+  }
+
+  reviewRunWorktree(taskId: string, runId: string): WorkspaceReview {
+    const task = this.task(taskId);
+    const record = this.store.getRunWorktree(runId);
+    if (!record || record.taskId !== task.id) throw new Error("Run worktree not found");
+    if (record.state !== "ready") throw new Error("Run worktree is not ready");
+    this.idle([record.path]);
+    this.assertRunWorktree(record);
+    return {
+      head: git(record.path, ["rev-parse", "HEAD"]), branch: record.branch,
+      status: git(record.path, ["status", "--short", "--untracked-files=all"]),
+      diff: git(record.path, ["diff", "--no-ext-diff", "--no-textconv", record.baseCommit, "--"]),
+    };
+  }
+
+  mergeRunWorktree(taskId: string, runId: string, head: string) {
+    const task = this.task(taskId);
+    const record = this.store.getRunWorktree(runId);
+    if (!record || record.taskId !== task.id) throw new Error("Run worktree not found");
+    if (record.state !== "ready") throw new Error("Run worktree is not ready");
+    if (canonical(record.path) !== this.runWorktreePath(task.id, runId)) throw new Error("Workspace is outside its managed location");
+    this.idle([record.source, record.path]);
+    this.assertRunWorktree(record);
+    if (!/^[a-f0-9]{40,64}$/.test(head) || git(record.path, ["rev-parse", "HEAD"]) !== head) throw new Error("Review is stale. Refresh changes before merging.");
+    if (git(record.path, ["status", "--porcelain", "--untracked-files=all"])) throw new Error("Commit task changes and review again before merging");
+    if (git(record.source, ["symbolic-ref", "--short", "HEAD"]) !== record.sourceBranch) throw new Error("Source branch changed. Restore the target branch before merging.");
+    if (git(record.source, ["status", "--porcelain", "--untracked-files=all"])) throw new Error("Source checkout has local changes. Preserve them before merging.");
+    git(record.source, ["merge", "--ff-only", "--no-edit", "--no-overwrite-ignore", head]);
+    let cleanedUp = true;
+    try {
+      this.removeRunWorktree(taskId, runId);
+    } catch {
+      cleanedUp = false;
+    }
+    return { ok: true as const, head, cleanedUp };
   }
 }

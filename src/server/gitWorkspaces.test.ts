@@ -54,7 +54,7 @@ describe("isolated task workspaces", { timeout: 30000 }, () => {
     const first = service.create(task.id);
     const second = service.create(makeTask().id);
     const spawn = vi.fn<AgentProvider["spawn"]>(() => Object.assign(new EventEmitter(), { stdout: new PassThrough(), stderr: new PassThrough() }) as unknown as ReturnType<AgentProvider["spawn"]>);
-    const runs = new AgentRuns(store, () => ({ name: "codex", contextBudget: { maxPromptChars: 200_000, supportsProfileContext: true }, args: () => [], spawn }), (prompt) => prompt);
+    const runs = new AgentRuns(store, () => ({ name: "codex", contextBudget: { maxPromptChars: 200_000, supportsProfileContext: true }, readOnly: { supported: true, args: [] }, args: () => [], spawn }), (prompt) => prompt);
     const a = runs.start(first.id, { provider: "codex" });
     const b = runs.start(second.id, { provider: "codex" });
     expect(store.getRun(a)?.project).toBe(first.workspace!.path);
@@ -73,7 +73,7 @@ describe("isolated task workspaces", { timeout: 30000 }, () => {
     store.finishRun(old.id, "done", 0);
     service.create(task.id);
     const spawn = vi.fn<AgentProvider["spawn"]>();
-    const runs = new AgentRuns(store, () => ({ name: "codex", contextBudget: { maxPromptChars: 200_000, supportsProfileContext: true }, args: () => [], spawn }), (prompt) => prompt);
+    const runs = new AgentRuns(store, () => ({ name: "codex", contextBudget: { maxPromptChars: 200_000, supportsProfileContext: true }, readOnly: { supported: true, args: [] }, args: () => [], spawn }), (prompt) => prompt);
     expect(() => runs.start(task.id, { provider: "codex", followup: "continue" })).toThrow("No codex session");
     expect(spawn).not.toHaveBeenCalled();
     expect(store.getRun(old.id)?.project).toBe(task.project);
@@ -147,6 +147,43 @@ describe("isolated task workspaces", { timeout: 30000 }, () => {
     git(isolated.workspace!.path, "checkout", isolated.workspace!.branch);
     git(isolated.workspace!.source, "worktree", "remove", isolated.workspace!.path);
     expect(() => taskWorkdir(isolated)).toThrow("missing");
+  });
+});
+
+describe("per-run member worktrees", { timeout: 30000 }, () => {
+  it("provisions isolated run worktrees, reviews, and merges with cleanup", () => {
+    const { source, task, service, store } = setup();
+    const first = service.createRunWorktree(task.id, "run-aaa");
+    const second = service.createRunWorktree(task.id, "run-bbb");
+    expect(first.path).not.toBe(second.path);
+    expect(first.branch).not.toBe(second.branch);
+    expect(first.baseCommit).toBe(second.baseCommit);
+    writeFileSync(join(first.path, "member.txt"), "member work\n");
+    git(first.path, "add", ".");
+    git(first.path, "commit", "-m", "member change");
+    const review = service.reviewRunWorktree(task.id, "run-aaa");
+    expect(review.branch).toBe(first.branch);
+    expect(review.diff).toContain("member work");
+    const merged = service.mergeRunWorktree(task.id, "run-aaa", review.head);
+    expect(merged).toMatchObject({ ok: true, head: review.head, cleanedUp: true });
+    expect(readFileSync(join(source, "member.txt"), "utf8")).toBe("member work\n");
+    expect(existsSync(first.path)).toBe(false);
+    expect(store.getRunWorktree("run-aaa")?.state).toBe("removed");
+    expect(existsSync(second.path)).toBe(true);
+    const removed = service.removeRunWorktree(task.id, "run-bbb");
+    expect(removed.state).toBe("removed");
+    expect(existsSync(second.path)).toBe(false);
+  });
+
+  it("rejects stale heads and dirty worktrees on member merge", () => {
+    const { task, service } = setup();
+    const record = service.createRunWorktree(task.id, "run-ccc");
+    writeFileSync(join(record.path, "draft.txt"), "uncommitted\n");
+    expect(() => service.mergeRunWorktree(task.id, "run-ccc", "0".repeat(40))).toThrow("stale");
+    const head = git(record.path, "rev-parse", "HEAD");
+    expect(() => service.mergeRunWorktree(task.id, "run-ccc", head)).toThrow("Commit task changes");
+    expect(() => service.reviewRunWorktree(task.id, "missing-run")).toThrow("not found");
+    expect(() => service.mergeRunWorktree("missing-task", "run-ccc", head)).toThrow("Task not found");
   });
 });
 
