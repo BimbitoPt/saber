@@ -46,7 +46,7 @@ describe("specialist roles", () => {
     expect(seeded[0]).toMatchObject({ write: true, enabled: true, basedOnProfileRevisionId: approved.id });
     expect(seeded[0].providers).toEqual(["opencode", "codex", "claude"]);
     expect(seeded[1]).toMatchObject({ write: false, enabled: true, basedOnProfileRevisionId: approved.id });
-    expect(seeded[1].providers).toEqual(["claude"]);
+    expect(seeded[1].providers).toEqual(["claude", "codex"]);
     expect(teams.listRoles(directory)).toHaveLength(2);
   });
 

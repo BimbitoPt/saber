@@ -83,7 +83,7 @@ export class SpecialistTeams {
       {
         id: "reviewer", projectRoot: project.root, displayName: "Reviewer",
         instructions: "Review the workspace changes without modifying files and report findings per acceptance criterion.",
-        write: false, providers: ["claude"],
+        write: false, providers: ["claude", "codex"],
         basedOnProfileRevisionId: project.activeRevisionId, enabled: true, createdAt: now, updatedAt: now,
       },
     ];

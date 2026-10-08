@@ -117,7 +117,7 @@ Verification: full Vitest 24 files / 139 tests, `test:terminal` (2 Rust + 17 Vit
 
 Kill-mechanics note (2026-10-08, not a defect): when the server process dies, provider children die on the broken output pipe within seconds (verified: no orphans survive), so restart reconciliation to `interrupted` is honest — never falsely running or completed. Under violent kills, close handlers may record `error` instead of `interrupted`; this is cosmetic (error runs hold no locks and block nothing) and needs no fix unless it appears in normal app-close usage.
 
-Remaining gaps: native Tauri-window checks; authenticated Claude smoke (no account); clean-account/VM install; codex read-only verification (CLI not installed).
+Remaining gaps: native Tauri-window checks; authenticated Claude smoke (no account); clean-account/VM install.
 
 ## Design self-review
 

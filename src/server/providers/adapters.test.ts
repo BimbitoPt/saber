@@ -39,8 +39,10 @@ describe("provider read-only declarations", () => {
     expect(claudeArgs({ workdir: "C:/project", task: "review", readOnly: true }).slice(0, 8)).toEqual(["--print", "--verbose", "--output-format", "stream-json", "--permission-mode", "plan", "--disallowedTools", "Edit Write NotebookEdit"]);
     expect(claudeArgs({ workdir: "C:/project", task: "review" })).not.toContain("--permission-mode");
   });
-  it("reports codex read-only unavailable until its CLI interface is verified", () => {
-    expect(codexProvider().readOnly).toEqual({ supported: false, reason: expect.stringContaining("unverified") });
+  it("declares codex read-only through the verified sandbox flag", () => {
+    expect(codexProvider().readOnly).toEqual({ supported: true, args: ["-c", 'sandbox_mode="read-only"'] });
+    expect(codexArgs({ workdir: "C:/project", task: "review", readOnly: true }).slice(0, 5)).toEqual(["exec", "-c", 'sandbox_mode="read-only"', "-c", 'approval_policy="never"']);
+    expect(codexArgs({ workdir: "C:/project", task: "work" }).slice(0, 5)).toEqual(["exec", "-c", 'sandbox_mode="workspace-write"', "-c", 'approval_policy="never"']);
   });
 });
 
