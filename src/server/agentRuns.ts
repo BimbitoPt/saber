@@ -12,6 +12,7 @@ import type { ProviderId, TaskRecord } from "../lib/tasks";
 import { taskWorkdir } from "./gitWorkspaces";
 import { resolveProjectSource } from "./projectProfiles";
 import { getTerminalLocks, type TerminalLocks } from "./terminalLocks";
+import { formatOnyxSection, queryOnyxContext, type OnyxResolution } from "./onyxContext";
 
 export const DEFAULT_ROLE_ID = "default";
 export const DEFAULT_ROLE_INSTRUCTIONS = "Act as the project's implementing agent: follow the profile conventions and stack, verify each acceptance criterion with real checks, and report verification per criterion without merging or deploying.";
@@ -32,6 +33,9 @@ export interface AssembledScope {
   roleInstructions: string;
   contextSources: string[];
   contextNotice?: string;
+  onyxContextSha?: string;
+  onyxProvenance?: "onyx" | "unavailable";
+  onyxNotice?: string;
 }
 
 export interface ScopePreview {
@@ -56,6 +60,7 @@ export interface StartOptions {
   workdir?: string;
   readOnly?: boolean;
   runId?: string;
+  onyx?: OnyxResolution;
 }
 
 export class AgentRuns {
@@ -64,7 +69,7 @@ export class AgentRuns {
 
   constructor(private store: TaskStore, private provider: (name?: ProviderId) => AgentProvider = getProvider, private enhancePrompt = enhance, private terminalLocks: TerminalLocks = getTerminalLocks()) {}
 
-  start(taskId: string, options: StartOptions = {}) {
+  async start(taskId: string, options: StartOptions = {}) {
     this.terminalLocks.hydrate(this.store);
     const task = this.store.getTask(taskId);
     if (!task) throw new Error("Task not found");
@@ -78,7 +83,8 @@ export class AgentRuns {
     if (options.followup && !previous) throw new Error(`No ${providerId} session was captured for this task. Start a new run with this provider first.`);
     const model = options.model?.trim() || (options.followup ? previous?.model : undefined);
     const role = options.role ?? { id: DEFAULT_ROLE_ID, instructions: DEFAULT_ROLE_INSTRUCTIONS };
-    const scope = this.assembleScope(task, workdir, adapter, model, options.followup, role);
+    const onyx = options.onyx ?? await queryOnyxContext(task);
+    const scope = this.assembleScope(task, workdir, adapter, model, options.followup, role, onyx);
     const run = this.store.createRun(task.id, scope.prompt, model, providerId, workdir, scope, options.runId);
     try {
       const child = adapter.spawn({ workdir, task: scope.prompt, model, readOnly: options.readOnly,
@@ -151,8 +157,22 @@ export class AgentRuns {
     return { revision, parts };
   }
 
-  assembleScope(task: TaskRecord, workdir: string, adapter: AgentProvider, model?: string, followup?: string, role: MemberRole = { id: DEFAULT_ROLE_ID, instructions: DEFAULT_ROLE_INSTRUCTIONS }): AssembledScope {
+  assembleScope(task: TaskRecord, workdir: string, adapter: AgentProvider, model?: string, followup?: string, role: MemberRole = { id: DEFAULT_ROLE_ID, instructions: DEFAULT_ROLE_INSTRUCTIONS }, onyx?: OnyxResolution): AssembledScope {
     const { revision, parts } = this.scopeParts(task, role, followup);
+    let onyxContextSha: string | undefined;
+    let onyxProvenance: "onyx" | "unavailable" | undefined;
+    let onyxNotice: string | undefined;
+    if (onyx?.ok && onyx.hits.length > 0) {
+      onyxContextSha = onyx.sha;
+      onyxProvenance = "onyx";
+      parts.push({ name: `project context from Onyx (cited, ${onyx.sha.slice(0, 8)})`, text: formatOnyxSection(onyx.sha, onyx.hits) });
+    } else if (onyx?.ok) {
+      onyxContextSha = onyx.sha;
+      onyxProvenance = "onyx";
+    } else if (onyx) {
+      onyxProvenance = "unavailable";
+      onyxNotice = onyx.notice;
+    }
     const prompt = this.enhancePrompt(parts.map((part) => part.text).filter(Boolean).join("\n\n"), workdir);
     if (!adapter.contextBudget.supportsProfileContext) {
       const omitted = revision ? ["project profile snapshot", "role instructions"] : ["role instructions"];
@@ -169,6 +189,7 @@ export class AgentRuns {
       profileRevisionId: revision?.id, roleId: role.id, roleInstructions: role.instructions,
       contextSources: parts.map((part) => part.name),
       contextNotice: revision ? undefined : "No approved project profile; this run launches without profile context.",
+      onyxContextSha, onyxProvenance, onyxNotice,
     };
   }
 

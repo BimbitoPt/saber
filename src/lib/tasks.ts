@@ -101,6 +101,9 @@ export interface RunRecord {
   roleInstructions?: string;
   contextSources?: string[];
   contextNotice?: string;
+  onyxContextSha?: string;
+  onyxProvenance?: "onyx" | "unavailable";
+  onyxNotice?: string;
   status: RunStatus;
   eventCount: number;
   startedAt: number;
@@ -114,6 +117,9 @@ export interface RunContextCapture {
   roleInstructions?: string;
   contextSources?: string[];
   contextNotice?: string;
+  onyxContextSha?: string;
+  onyxProvenance?: "onyx" | "unavailable";
+  onyxNotice?: string;
 }
 
 export interface TaskSummary extends TaskRecord {

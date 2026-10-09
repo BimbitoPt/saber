@@ -404,6 +404,8 @@ export class TaskStore {
       profileRevisionId: capture.profileRevisionId, roleId: capture.roleId,
       roleInstructions: capture.roleInstructions, contextSources: capture.contextSources,
       contextNotice: capture.contextNotice,
+      onyxContextSha: capture.onyxContextSha, onyxProvenance: capture.onyxProvenance,
+      onyxNotice: capture.onyxNotice,
       status: "running", eventCount: 0,
       startedAt: Date.now(), exitCode: null,
     };

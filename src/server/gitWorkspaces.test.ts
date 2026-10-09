@@ -12,8 +12,12 @@ import type { AgentProvider } from "./providers/types";
 
 const fixtures: Array<{ root: string; store: TaskStore }> = [];
 const git = (cwd: string, ...args: string[]) => execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8", windowsHide: true, stdio: ["ignore", "pipe", "pipe"] }).trim();
+const savedOnyxDisabled = process.env.ONYX_DISABLED;
+process.env.ONYX_DISABLED = "1";
 afterEach(() => {
   for (const { root, store } of fixtures.splice(0)) { store.close(); rmSync(root, { recursive: true, force: true }); }
+  if (savedOnyxDisabled === undefined) delete process.env.ONYX_DISABLED;
+  else process.env.ONYX_DISABLED = savedOnyxDisabled;
 });
 
 function setup() {
@@ -49,24 +53,24 @@ describe("isolated task workspaces", { timeout: 30000 }, () => {
     expect(service.create(task.id).workspace).toEqual(isolated.workspace);
   });
 
-  it("allows parallel runs in separate worktrees and blocks same-worktree runs", () => {
+  it("allows parallel runs in separate worktrees and blocks same-worktree runs", async () => {
     const { task, service, makeTask, store } = setup();
     const first = service.create(task.id);
     const second = service.create(makeTask().id);
     const spawn = vi.fn<AgentProvider["spawn"]>(() => Object.assign(new EventEmitter(), { stdout: new PassThrough(), stderr: new PassThrough() }) as unknown as ReturnType<AgentProvider["spawn"]>);
     const runs = new AgentRuns(store, () => ({ name: "codex", contextBudget: { maxPromptChars: 200_000, supportsProfileContext: true }, readOnly: { supported: true, args: [] }, args: () => [], spawn }), (prompt) => prompt);
-    const a = runs.start(first.id, { provider: "codex" });
-    const b = runs.start(second.id, { provider: "codex" });
+    const a = await runs.start(first.id, { provider: "codex" });
+    const b = await runs.start(second.id, { provider: "codex" });
     expect(store.getRun(a)?.project).toBe(first.workspace!.path);
     expect(store.getRun(b)?.project).toBe(second.workspace!.path);
     expect(spawn.mock.calls.map(([options]) => options.workdir)).toEqual([first.workspace!.path, second.workspace!.path]);
-    expect(() => runs.start(first.id)).toThrow("still closing");
+    await expect(runs.start(first.id)).rejects.toThrow("still closing");
     expect(() => service.remove(first.id)).toThrow("running");
     store.finishRun(a, "interrupted", null);
     expect(() => store.createRun(first.id, "retry")).toThrow("interrupted");
   });
 
-  it("never resumes native state from a previous checkout", () => {
+  it("never resumes native state from a previous checkout", async () => {
     const { store, task, service } = setup();
     const old = store.createRun(task.id, "old", undefined, "codex");
     store.setNativeSession(old.id, "source-session");
@@ -74,7 +78,7 @@ describe("isolated task workspaces", { timeout: 30000 }, () => {
     service.create(task.id);
     const spawn = vi.fn<AgentProvider["spawn"]>();
     const runs = new AgentRuns(store, () => ({ name: "codex", contextBudget: { maxPromptChars: 200_000, supportsProfileContext: true }, readOnly: { supported: true, args: [] }, args: () => [], spawn }), (prompt) => prompt);
-    expect(() => runs.start(task.id, { provider: "codex", followup: "continue" })).toThrow("No codex session");
+    await expect(runs.start(task.id, { provider: "codex", followup: "continue" })).rejects.toThrow("No codex session");
     expect(spawn).not.toHaveBeenCalled();
     expect(store.getRun(old.id)?.project).toBe(task.project);
   });

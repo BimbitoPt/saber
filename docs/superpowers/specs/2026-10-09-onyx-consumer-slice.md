@@ -2,7 +2,7 @@
 
 ## Status and authorization
 
-**Status:** Draft pending user review, 2026-10-09. A4 (PAC spec review) completed the same day, unblocking this slice. No code has been written; implementation requires review of this written spec and a separate implementation plan.
+**Status:** Approved for implementation by the user on 2026-10-09 ("lets go to phase B"). Review answers below are locked. Implementation plan: `docs/superpowers/plans/2026-10-09-onyx-consumer-slice.md`.
 
 ## Problem and user workflow
 
@@ -43,13 +43,21 @@ Additive optional fields on `RunRecord` (e.g. `contextSha`, `contextProvenance`)
 | ONX-03 | Stored-JSON/DB grep tests against fixture secrets; config-vs-DB separation test. | None beyond inspecting the demo database. |
 | ONX-04 | `bun run test`, `tsc`, production build. | Windows-only demo checklist with evidence per ONX-01–ONX-03. |
 
-## Open questions for the reviewer
+## Review answers (locked 2026-10-09)
 
-1. Onyx base URL and auth: where does the server live, and what auth (if any) does `GET /context/query` require?
-2. Exact response schema: is `contextSha` a top-level field, and what query parameters does the endpoint expect (canonical project root, something else)?
-3. Offline behavior: confirm the proposed proceed-with-notice fallback, or should Onyx failure block launch instead?
-4. Onyx M5 alignment: is there an external Onyx milestone/spec to version-lock against?
+1. Onyx base URL and auth: `http://127.0.0.1:8083` with an `x-tenant-id` header (default `default`); no login. Configured via `ONYX_BASE_URL` / `ONYX_TENANT_ID` environment, never persisted. Verified live during review (200 with cited hits).
+2. Response schema: `{ tenantId, query, answer, hits[{ sourcePath, note, heading, excerpt, mtime, score }], freshness }`. Onyx item 1.3 (snake_case hardening) is not done, so Saber normalizes both casings defensively and requires only heading/excerpt/score-side fields it cites.
+3. Offline behavior: proceed-with-notice (both roadmaps: Onyx never blocks Saber). Recorded as `onyxProvenance: "unavailable"` plus an explicit immutable `onyxNotice`.
+4. Onyx M5 alignment: Onyx Phase 3 (Feb 2027) waits on this slice; no Onyx-side changes needed (`contextSha` is computed Saber-side, so Onyx builds no speculative API surface).
+5. `contextSha` provenance: SHA-256 hex over canonical JSON of `{ tenantId, query, normalized hits }`, computed Saber-side with the existing `hashContent`.
 
-## Completion evidence
+## Completion evidence (2026-10-09)
 
-None yet — implementation is intentionally not started pending review.
+Implemented per `docs/superpowers/plans/2026-10-09-onyx-consumer-slice.md`. `AgentRuns.start` / `SpecialistTeams.launchTeam` are async; the three `server.ts` call sites await.
+
+- ONX-01: `onyxContext.test.ts` 10/10 (live shape, snake_case variant with identical sha, malformed-drop, empty-hits ok, non-200/unreachable/timeout/invalid-JSON notices, tenant header + abort signal, excerpt cap, disabled flag, section format). Default launch path proven against a fixture HTTP server (exactly 1 request); team launch proves one query shared by all members. Live `GET /context/query` returned 200 with cited hits throughout.
+- ONX-02: file-store reopen test restores the three fields byte-identically; no migration (additive JSON blob fields).
+- ONX-03: stored run JSON asserted free of base URL and credential material; addressing is env-only (`ONYX_BASE_URL`, `ONYX_TENANT_ID`, `ONYX_DISABLED`).
+- ONX-04: full Vitest 25 files / 155 passed + 1 skipped (live-Onyx test, run separately green 17/17 with `SABER_LIVE_ONYX=1`); `test:terminal` 2 Rust + 22 Vitest; `bunx tsc --noEmit` clean; `bun run build` green; `cargo test` 9/9; `git diff --check` clean. Production-server demo (isolated `SABER_DATA_DIR`, live Onyx on :8083, real opencode spawn then stop) DEMO GREEN 10/10: sha `f524b90d…` recorded with provenance `onyx` and cited prompt section; Onyx-down fallback recorded `unavailable` with cause notice and no sha/section; server restart preserved sha + section.
+
+Remaining gaps and accepted limitations: pre-launch preview stays local-only (Onyx resolves at launch, auditable on the run); Onyx item 1.3 snake_case hardening still pending Onyx-side (Saber normalizes both casings); the Onyx server lifecycle is user-managed — Saber never spawns it; the demo relaunched Onyx after the fallback kill. No Tauri runtime changes: MSI/NSIS not rebuilt.

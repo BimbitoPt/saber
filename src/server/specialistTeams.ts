@@ -6,6 +6,7 @@ import { AgentRuns } from "./agentRuns";
 import { GitWorkspaceService, taskSourceRoot } from "./gitWorkspaces";
 import { TerminalLocks, getTerminalLocks } from "./terminalLocks";
 import { workspacesOverlap } from "./workspaceIdentity";
+import { queryOnyxContext } from "./onyxContext";
 
 export const KNOWN_PROVIDERS: ProviderId[] = ["opencode", "codex", "claude"];
 export const MAX_TEAM_SIZE = 4;
@@ -188,7 +189,7 @@ export class SpecialistTeams {
     return { taskId, source, members };
   }
 
-  launchTeam(taskId: string, selections: MemberSelection[]): TeamRecord {
+  async launchTeam(taskId: string, selections: MemberSelection[]): Promise<TeamRecord> {
     const plan = this.planTeam(taskId, selections);
     const runIds = plan.members.map(() => crypto.randomUUID());
     const reserved: string[] = [];
@@ -210,20 +211,23 @@ export class SpecialistTeams {
     const team = this.store.createTeam(taskId, plan.members.map((member, index) => ({
       role: member.role.id, provider: member.provider, model: member.model, runId: runIds[index],
     })));
-    plan.members.forEach((member, index) => {
+    const task = this.store.getTask(taskId);
+    const onyx = task ? await queryOnyxContext(task) : undefined;
+    for (const [index, member] of plan.members.entries()) {
       const runId = runIds[index];
       const worktree = this.store.getRunWorktree(runId);
-      if (!worktree) return;
+      if (!worktree) continue;
       try {
-        this.runs().start(taskId, {
+        await this.runs().start(taskId, {
           provider: member.provider, model: member.model,
           role: { id: member.role.id, instructions: member.role.instructions },
           workdir: worktree.path, readOnly: member.readOnly, runId,
+          ...(onyx ? { onyx } : {}),
         });
       } catch {
         // The run record (in error state) or its absence stays visible; member outcomes are never hidden.
       }
-    });
+    }
     return team;
   }
 }

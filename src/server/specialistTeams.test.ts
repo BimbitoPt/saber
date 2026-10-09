@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { execFileSync } from "node:child_process";
 import { EventEmitter } from "node:events";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,9 +17,14 @@ import type { AgentProvider } from "./providers/types";
 
 const stores: TaskStore[] = [];
 const directories: string[] = [];
+const savedOnyxDisabled = process.env.ONYX_DISABLED;
+process.env.ONYX_DISABLED = "1";
 afterEach(() => {
   stores.splice(0).forEach((store) => store.close());
   directories.splice(0).forEach((directory) => rmSync(directory, { recursive: true, force: true }));
+  if (savedOnyxDisabled === undefined) delete process.env.ONYX_DISABLED;
+  else process.env.ONYX_DISABLED = savedOnyxDisabled;
+  delete process.env.ONYX_BASE_URL;
 });
 
 function setup() {
@@ -182,10 +189,10 @@ describe("specialist team launch", { timeout: 30000 }, () => {
     expect(() => blocked.planTeam(task.id, [{ role: "reviewer", provider: "claude" }])).toThrow("interactive terminal");
   });
 
-  it("launches members in distinct worktrees with captured roles", () => {
+  it("launches members in distinct worktrees with captured roles", async () => {
     const { root, source } = makeRepo();
     const { store, task, teams, spawn } = teamSetup(source, root);
-    const team = teams.launchTeam(task.id, [
+    const team = await teams.launchTeam(task.id, [
       { role: "implementer", provider: "opencode" },
       { role: "reviewer", provider: "claude" },
     ]);
@@ -210,7 +217,7 @@ describe("specialist team launch", { timeout: 30000 }, () => {
     expect(branches.size).toBe(2);
   });
 
-  it("rolls back reservations when provisioning fails, creating nothing", () => {
+  it("rolls back reservations when provisioning fails, creating nothing", async () => {
     const { root, source } = makeRepo();
     const { store, task, teams } = teamSetup(source, root);
     const created: string[] = [];
@@ -227,17 +234,17 @@ describe("specialist team launch", { timeout: 30000 }, () => {
       },
     };
     teams.withServices(new AgentRuns(store), failing as unknown as GitWorkspaceService);
-    expect(() => teams.launchTeam(task.id, [
+    await expect(teams.launchTeam(task.id, [
       { role: "implementer", provider: "opencode" },
       { role: "reviewer", provider: "claude" },
-    ])).toThrow("disk full");
+    ])).rejects.toThrow("disk full");
     expect(created).toHaveLength(1);
     expect(removed).toEqual(created);
     expect(store.listRuns(task.id)).toHaveLength(0);
     expect(store.listTeams(task.id)).toHaveLength(0);
   });
 
-  it("keeps partial spawn failure visible without hiding members", () => {
+  it("keeps partial spawn failure visible without hiding members", async () => {
     const { root, source } = makeRepo();
     let calls = 0;
     const { store, task, teams } = teamSetup(source, root, () => {
@@ -245,7 +252,7 @@ describe("specialist team launch", { timeout: 30000 }, () => {
       if (calls > 1) throw new Error("spawn failed");
       return makeChild();
     });
-    const team = teams.launchTeam(task.id, [
+    const team = await teams.launchTeam(task.id, [
       { role: "implementer", provider: "opencode" },
       { role: "reviewer", provider: "claude" },
     ]);
@@ -257,19 +264,46 @@ describe("specialist team launch", { timeout: 30000 }, () => {
     expect(store.listTeams(task.id)).toHaveLength(1);
   });
 
-  it("blocks a second team while members are active, but allows one after terminal states", () => {
+  it("blocks a second team while members are active, but allows one after terminal states", async () => {
     const { root, source } = makeRepo();
     const { store, task, teams } = teamSetup(source, root);
     const members = [
       { role: "implementer", provider: "opencode" },
       { role: "reviewer", provider: "claude" },
     ];
-    teams.launchTeam(task.id, members);
-    expect(() => teams.launchTeam(task.id, [{ role: "reviewer", provider: "claude" }])).toThrow("already active");
+    await teams.launchTeam(task.id, members);
+    await expect(teams.launchTeam(task.id, [{ role: "reviewer", provider: "claude" }])).rejects.toThrow("already active");
     expect(() => teams.planTeam(task.id, [{ role: "reviewer", provider: "claude" }])).toThrow("already active");
     for (const team of store.listTeams(task.id)) {
       for (const member of team.members) store.finishRun(member.runId, "done", 0);
     }
-    expect(teams.launchTeam(task.id, [{ role: "reviewer", provider: "claude" }]).members).toHaveLength(1);
+    expect((await teams.launchTeam(task.id, [{ role: "reviewer", provider: "claude" }])).members).toHaveLength(1);
+  });
+
+  it("shares one onyx reference across members with a single query", async () => {
+    const { root, source } = makeRepo();
+    const { store, task, teams } = teamSetup(source, root);
+    let requests = 0;
+    const server = createServer((req, res) => {
+      requests += 1;
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({ hits: [{ sourcePath: "C:/corpus/Saber.md", heading: "Saber", excerpt: "A workspace.", mtime: "2026-09-18T11:12:56.943Z", score: 2 }] }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as AddressInfo).port;
+    delete process.env.ONYX_DISABLED;
+    process.env.ONYX_BASE_URL = `http://127.0.0.1:${port}`;
+    try {
+      const team = await teams.launchTeam(task.id, [
+        { role: "implementer", provider: "opencode" },
+        { role: "reviewer", provider: "claude" },
+      ]);
+      expect(requests).toBe(1);
+      const shas = team.members.map((member) => store.getRun(member.runId)?.onyxContextSha);
+      expect(shas[0]).toMatch(/^[0-9a-f]{64}$/);
+      expect(shas[1]).toBe(shas[0]);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 });

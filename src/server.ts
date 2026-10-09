@@ -262,7 +262,7 @@ async function handleApi(request: Request): Promise<Response | null> {
       const provider = (body.provider ?? "opencode") as ProviderId;
       const readiness = await providerStatus(provider);
       if (!readiness.installed || readiness.auth === "signed-out") return jsonResponse({ error: readiness.message }, 409);
-      const id = getAgentRuns().start(taskRuns[1], { provider, model: body.model as string | undefined, followup: body.followup as string | undefined });
+      const id = await getAgentRuns().start(taskRuns[1], { provider, model: body.model as string | undefined, followup: body.followup as string | undefined });
       return jsonResponse({ id }, 201);
     } catch (error) { return jsonResponse({ error: String(error) }, 409); }
   }
@@ -296,7 +296,7 @@ async function handleApi(request: Request): Promise<Response | null> {
     }
     try {
       const record = getTaskStore().createTask({ project: resolveWorkdir(project), title: task.slice(0, 120), spec: task, criteria: "Report the changes and verification results." });
-      const id = getAgentRuns().start(record.id, { model });
+      const id = await getAgentRuns().start(record.id, { model });
       return jsonResponse({ id }, 201);
     } catch (error) {
       console.error(describeError(error));
@@ -333,7 +333,7 @@ async function handleApi(request: Request): Promise<Response | null> {
       if (!run) return jsonResponse({ error: "not found" }, 404);
       const readiness = await providerStatus(run.provider);
       if (!readiness.installed || readiness.auth === "signed-out") return jsonResponse({ error: readiness.message }, 409);
-      const id = getAgentRuns().start(run.taskId, { provider: run.provider, followup: body.task });
+      const id = await getAgentRuns().start(run.taskId, { provider: run.provider, followup: body.task });
       return jsonResponse({ id }, 201);
     } catch (error) {
       console.error(describeError(error));
@@ -480,7 +480,7 @@ async function handleApi(request: Request): Promise<Response | null> {
         const readiness = await providerStatus(member.provider);
         if (!readiness.installed || readiness.auth === "signed-out") return jsonResponse({ error: readiness.message }, 409);
       }
-      return jsonResponse(planner.launchTeam(teamMatch[1], body.members), 201);
+      return jsonResponse(await planner.launchTeam(teamMatch[1], body.members), 201);
     } catch (error) { return profileError(error); }
   }
 
