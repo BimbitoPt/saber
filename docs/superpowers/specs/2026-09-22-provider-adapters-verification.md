@@ -32,3 +32,7 @@ Independent adapter review found no blocking issues. Its readiness coverage gaps
 
 Claude reports signed out. Its argv, event normalization, denial handling, readiness and lifecycle are tested; real authenticated launch/resume is unverified and intentionally skipped by user request. Windows shim-only installations are unsupported. No isolated workspaces or interactive permission bridge are included in this slice.
 
+## Phase A item A3 (2026-10-09)
+
+A3 (authenticated Claude smoke) is formally blocked: no Claude Code account exists in this environment, unchanged since 2026-09-22. No authenticated Claude launch was attempted or fabricated. Adapter contract coverage (argv, event normalization, denial handling, readiness signed-out unavailability) plus the explicit signed-out UI gate stand as the evidence. Per the roadmap this block does not hold Phase B.
+

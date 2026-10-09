@@ -2,7 +2,7 @@
 
 ## Status and authorization
 
-**Status:** Implemented and verified on Windows x64; clean-account installation and packaged PTY smoke remain pending.
+**Status:** Implemented and verified on Windows x64. Phase A item A2 (clean-account installation, packaged PTY marker, packaged PTY cleanup) recorded done 2026-10-09 on the user's manual pass; see A2 completion evidence below.
 
 ## Problem and user workflow
 
@@ -98,7 +98,7 @@ Linux partial verification on 2026-09-24: a WSL Ubuntu 26.04 harness compiled th
 
 Linux desktop packaging and launch are still unsupported by this Windows-only runtime slice: production startup currently expects the Windows `node.exe` resource, the development path expects `bun`, and the Tauri bundle targets are MSI/NSIS. A direct Linux app launch was therefore not counted. The Linux-target Cargo tests and API server smoke do not establish Linux Tauri UI or packaged PTY support. macOS remains untested.
 
-Still pending: MSI installation into a clean Windows account/VM, a harmless terminal marker command inside the packaged Windows Tauri window, and packaged PTY cleanup. Linux desktop runtime, packaging, and native PTY support need a separate versioned feature slice before implementation. The CLI, provider binaries, and remote access remain out of scope.
+A2 completion evidence (2026-10-09, user-reported manual pass per `docs/superpowers/specs/2026-10-08-native-terminal-verification.md`): MSI/NSIS rebuilt in-session after the verbatim-prefix PTY fix (`bun run tauri:build` completed through candle/light MSI and makensis NSIS) and reinstalled; the task terminal starts in the requested worktree with no `\\?\` prefix; A-B-A recovery restores the marker terminal; app close leaves no owned terminal/server children. Linux desktop runtime, packaging, and native PTY support need a separate versioned feature slice before implementation. The CLI, provider binaries, and remote access remain out of scope.
 
 ## References
 
