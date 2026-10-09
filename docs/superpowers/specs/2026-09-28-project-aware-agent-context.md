@@ -119,6 +119,10 @@ Kill-mechanics note (2026-10-08, not a defect): when the server process dies, pr
 
 Remaining gaps: native Tauri-window checks; authenticated Claude smoke (no account); clean-account/VM install.
 
+## A4 completion evidence (2026-10-09)
+
+Phase A item A4 (review the project-aware agent context draft spec; approve or revise) is complete. The user authorized A4 directly on 2026-10-09. Review outcome: no revisions requested — the 2026-10-06 approver decisions stand, and Slices 1 and 2 carry the verified implementation receipts for PAC-01–PAC-09 above. This record unblocks Onyx M5 and Phase B3 (Onyx consumer slice); B3 requires its own approved draft spec before implementation. B3 draft: `docs/superpowers/specs/2026-10-09-onyx-consumer-slice.md`.
+
 ## Design self-review
 
 - Scope is one coherent vertical slice across project profile, immutable context capture, and opt-in bounded specialists; no cloud service or independent editor is introduced.
