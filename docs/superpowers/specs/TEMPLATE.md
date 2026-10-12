@@ -28,4 +28,4 @@ Map each requirement ID to appropriate automated checks or browser verification.
 
 ## Completion evidence
 
-Record actual outcomes against each requirement, review findings and resolutions, and remaining limitations. Agent exit status alone does not establish verified completion.
+Record actual outcomes against each requirement, review findings and resolutions, and remaining limitations. Record `interventions: N`, the number of human corrections the slice needed; if that number is not falling over time, harness work has stalled. Agent exit status alone does not establish verified completion.
