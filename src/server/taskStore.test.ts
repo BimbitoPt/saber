@@ -130,6 +130,36 @@ describe("persistent tasks", () => {
     expect(() => reopened.setTerminalSessionStatus(session.id, "running")).toThrow("Cannot change terminal session from stopped");
   });
 
+  it("prevents an agent run from claiming a workspace owned by a terminal session", () => {
+    const { store } = setup();
+    const task = store.createTask(input);
+    store.createTerminalSession({
+      id: "terminal-owner",
+      taskId: task.id,
+      workdir: task.project,
+      status: "running",
+      createdAt: 12,
+    });
+
+    expect(() => store.createRun(task.id, "agent run")).toThrow("interactive terminal owns this workspace");
+    expect(store.listRuns(task.id)).toHaveLength(0);
+  });
+
+  it("prevents terminal creation from claiming a workspace owned by an active run", () => {
+    const { store } = setup();
+    const task = store.createTask(input);
+    store.createRun(task.id, "agent run");
+
+    expect(() => store.createTerminalSession({
+      id: "terminal-conflict",
+      taskId: task.id,
+      workdir: task.project,
+      status: "starting",
+      createdAt: 13,
+    })).toThrow("agent run is already using this workspace");
+    expect(store.listTerminalSessions()).toHaveLength(0);
+  });
+
   it("keeps a session active only when its opaque ID exists in the live Tauri process", () => {
     const { store } = setup();
     const task = store.createTask(input);
