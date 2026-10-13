@@ -135,10 +135,23 @@ export class TaskStore {
   createTerminalSession(record: TerminalSessionRecord) {
     if (!this.getTask(record.taskId)) throw new Error("Task not found");
     if (!record.id.trim() || !record.workdir.trim()) throw new Error("Terminal session ID and working directory are required");
-    const active = this.listTerminalSessions(record.taskId).find((item) => item.status !== "stopped");
-    if (active) throw new Error("This task already has a terminal session");
-    this.db.prepare("INSERT INTO terminal_sessions VALUES (?, ?, ?)").run(record.id, record.taskId, JSON.stringify(record));
-    return record;
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const active = this.listTerminalSessions().find((item) =>
+        item.status !== "stopped" && workspacesOverlap(item.workdir, record.workdir));
+      if (active) throw new Error("Another terminal session is already using this workspace.");
+      const runConflict = this.listRuns().find((run) =>
+        ["running", "interrupted"].includes(run.status) && workspacesOverlap(run.project, record.workdir));
+      if (runConflict) throw new Error(runConflict.status === "interrupted"
+        ? "An interrupted run owns this workspace. Confirm its old process has stopped before opening a terminal."
+        : "An agent run is already using this workspace. Wait or stop it before opening a terminal.");
+      this.db.prepare("INSERT INTO terminal_sessions VALUES (?, ?, ?)").run(record.id, record.taskId, JSON.stringify(record));
+      this.db.exec("COMMIT");
+      return record;
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   getTerminalSession(id: string) {
@@ -392,11 +405,6 @@ export class TaskStore {
     if (!task) throw new Error("Task not found");
     const project = workdir ?? task.workspace?.path ?? task.project;
     if (task.workspace && task.workspace.state !== "ready") throw new Error("Task workspace is not ready");
-    const conflict = this.listRuns().find((run) =>
-      ["running", "interrupted"].includes(run.status) && workspacesOverlap(run.project, project));
-    if (conflict) throw new Error(conflict.status === "interrupted"
-      ? "An interrupted run owns this workspace. Confirm its old process has stopped before retrying."
-      : "Another run is already using this workspace. Wait or stop it before launching.");
     const run: RunRecord = {
       id: runId ?? crypto.randomUUID(), taskId, project, task: prompt,
       provider, model, specRevision: task.revision, spec: task.spec,
@@ -409,8 +417,23 @@ export class TaskStore {
       status: "running", eventCount: 0,
       startedAt: Date.now(), exitCode: null,
     };
-    this.db.prepare("INSERT INTO runs VALUES (?, ?, ?)").run(run.id, taskId, JSON.stringify(run));
-    return run;
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const terminalConflict = this.listTerminalSessions().find((session) =>
+        session.status !== "stopped" && workspacesOverlap(session.workdir, project));
+      if (terminalConflict) throw new Error("An interactive terminal owns this workspace. Close it before launching an agent run.");
+      const conflict = this.listRuns().find((existing) =>
+        ["running", "interrupted"].includes(existing.status) && workspacesOverlap(existing.project, project));
+      if (conflict) throw new Error(conflict.status === "interrupted"
+        ? "An interrupted run owns this workspace. Confirm its old process has stopped before retrying."
+        : "Another run is already using this workspace. Wait or stop it before launching.");
+      this.db.prepare("INSERT INTO runs VALUES (?, ?, ?)").run(run.id, taskId, JSON.stringify(run));
+      this.db.exec("COMMIT");
+      return run;
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   private writeRun(run: RunRecord) {
