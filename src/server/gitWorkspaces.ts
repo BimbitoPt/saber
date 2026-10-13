@@ -164,9 +164,9 @@ export class GitWorkspaceService {
   }
 
   private async assertRunWorktree(record: RunWorktreeRecord, signal?: AbortSignal) {
-    if (canonical(await git(record.path, ["rev-parse", "--show-toplevel"], this.signal)) !== canonical(record.path)) throw new Error("Workspace root changed");
-    if (await git(record.path, ["symbolic-ref", "--short", "HEAD"], this.signal) !== record.branch) throw new Error("Workspace branch changed. Restore the task branch first.");
-    if (canonical(await git(record.path, ["rev-parse", "--path-format=absolute", "--git-common-dir"], signal)) !== canonical(await git(record.source, ["rev-parse", "--path-format=absolute", "--git-common-dir"], this.signal))) throw new Error("Workspace repository changed");
+    if (canonical(await git(record.path, ["rev-parse", "--show-toplevel"], signal)) !== canonical(record.path)) throw new Error("Workspace root changed");
+    if (await git(record.path, ["symbolic-ref", "--short", "HEAD"], signal) !== record.branch) throw new Error("Workspace branch changed. Restore the task branch first.");
+    if (canonical(await git(record.path, ["rev-parse", "--path-format=absolute", "--git-common-dir"], signal)) !== canonical(await git(record.source, ["rev-parse", "--path-format=absolute", "--git-common-dir"], signal))) throw new Error("Workspace repository changed");
   }
 
   async createRunWorktree(taskId: string, runId: string) {
