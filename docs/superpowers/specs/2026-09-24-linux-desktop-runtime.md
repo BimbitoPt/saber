@@ -74,6 +74,7 @@ The Rust test suite passes using Cargo's default parallel runner in WSL, includi
 - Keep Node pinned at v24.21.0 for this slice; platform selection changes the archive and executable format, not the release version.
 - Do not commit generated Tauri schemas. Source icon assets may be added only as normal reviewed product assets.
 - WSL Ubuntu 26.04 is the first end-to-end test host, not the minimum supported Linux release. A broader compatibility claim requires a later build/test matrix using the oldest intended base distribution; current Tauri documentation warns that glibc compatibility depends on the build base.
+- Dependabot alert [#1](https://github.com/BimbitoPt/saber/security/dependabot/1) (GHSA-wrw7-89jp-8q8g, unsoundness in `glib::VariantStrIter`) was dismissed as `tolerable_risk` on 2026-10-13 and must be revisited before Linux ships. No fix exists on this line: the issue is patched in `glib` 0.20.0 only, 0.18.5 is the last 0.18.x release, and Tauri 2.12.3 still requires `gtk ^0.18`, which resolves to the same vulnerable `glib`. It is transitive (Saber's own Rust code never references `glib`, `GVariant`, or `gio`), Linux-only, and its impact is a local NULL-deref crash rather than remote code execution. **Reopen condition:** any Tauri release built on gtk-rs 0.20+ brings `glib >= 0.20.0`; bump then and re-evaluate the alert rather than leaving it dismissed by default.
 
 ## Verification plan
 
