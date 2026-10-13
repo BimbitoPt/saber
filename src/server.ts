@@ -42,7 +42,7 @@ function profileError(error: unknown) {
   const message = String(error);
   const status = /not found/i.test(message) ? 404
     : /only draft|active revision|already|belongs to another|cannot change|interrupted|interactive terminal|at most|must include|stale|local changes|branch changed/i.test(message) ? 409 : 400;
-  return jsonResponse({ error: message }, status);
+  return errorResponse(error, status, "Request could not be completed");
 }
 
 function jsonResponse(data: unknown, status = 200) {
@@ -50,6 +50,11 @@ function jsonResponse(data: unknown, status = 200) {
     status,
     headers: { "content-type": "application/json", "cache-control": "no-store" },
   });
+}
+
+function errorResponse(error: unknown, status = 500, clientMessage = "Request failed") {
+  console.error(describeError(error));
+  return jsonResponse({ error: clientMessage }, status);
 }
 
 interface StartSessionBody {
@@ -102,7 +107,7 @@ async function handleApi(request: Request): Promise<Response | null> {
       const body = await request.json() as TaskInput;
       if (!body || typeof body.project !== "string") throw new Error("project is required");
       return jsonResponse(getTaskStore().createTask({ ...body, project: resolveWorkdir(body.project) }), 201);
-    } catch (error) { return jsonResponse({ error: String(error) }, 400); }
+    } catch (error) { return errorResponse(error, 400); }
   }
 
   const taskMatch = /^\/api\/tasks\/([^/]+)$/.exec(path);
@@ -127,7 +132,7 @@ async function handleApi(request: Request): Promise<Response | null> {
       } catch (error) {
         const message = String(error);
         const status = message.includes("Run not found") ? 404 : message.includes("current task revision") || message.includes("current spec revision") ? 409 : 400;
-        return jsonResponse({ error: message }, status);
+        return errorResponse(error, status);
       }
     }
     return jsonResponse({ error: "Method not allowed" }, 405);
@@ -149,7 +154,7 @@ async function handleApi(request: Request): Promise<Response | null> {
         if (request.method === "DELETE") return jsonResponse(service.remove(id));
       }
       return jsonResponse({ error: "Method not allowed" }, 405);
-    } catch (error) { return jsonResponse({ error: String(error) }, 409); }
+    } catch (error) { return errorResponse(error, 409); }
   }
   const taskTerminalMatch = /^\/api\/tasks\/([^/]+)\/terminals$/.exec(path);
   if (taskTerminalMatch) {
@@ -162,7 +167,7 @@ async function handleApi(request: Request): Promise<Response | null> {
         const workdir = taskWorkdir(task);
         const lock = getTerminalLocks().reserve(store, task.id, workdir);
         return jsonResponse(lock, 201);
-      } catch (error) { return jsonResponse({ error: String(error) }, 409); }
+      } catch (error) { return errorResponse(error, 409); }
     }
     return jsonResponse({ error: "Method not allowed" }, 405);
   }
@@ -180,7 +185,7 @@ async function handleApi(request: Request): Promise<Response | null> {
       }
       const records = getTerminalLocks().reconcile(getTaskStore(), body.liveSessionIds as string[]);
       return jsonResponse(records);
-    } catch (error) { return jsonResponse({ error: String(error) }, 400); }
+    } catch (error) { return errorResponse(error, 400); }
   }
   const runningTerminalMatch = /^\/api\/terminals\/([^/]+)\/running$/.exec(path);
   if (runningTerminalMatch && request.method === "POST") {
@@ -189,7 +194,7 @@ async function handleApi(request: Request): Promise<Response | null> {
       const record = store.setTerminalSessionStatus(runningTerminalMatch[1], "running");
       getTerminalLocks().hydrate(store);
       return jsonResponse(record);
-    } catch (error) { return jsonResponse({ error: String(error) }, 409); }
+    } catch (error) { return errorResponse(error, 409); }
   }
   const recoverTerminalMatch = /^\/api\/terminals\/([^/]+)\/recover$/.exec(path);
   if (recoverTerminalMatch && request.method === "POST") {
@@ -198,7 +203,7 @@ async function handleApi(request: Request): Promise<Response | null> {
       const record = getTaskStore().recoverTerminalSession(recoverTerminalMatch[1], body?.confirmedStopped === true);
       getTerminalLocks().release(record.id);
       return jsonResponse(record);
-    } catch (error) { return jsonResponse({ error: String(error) }, 409); }
+    } catch (error) { return errorResponse(error, 409); }
   }
   const terminalMatch = /^\/api\/terminals\/([^/]+)$/.exec(path);
   if (terminalMatch && request.method === "DELETE") {
@@ -210,7 +215,7 @@ async function handleApi(request: Request): Promise<Response | null> {
       store.setTerminalSessionStatus(record.id, "stopped");
       getTerminalLocks().release(record.id);
       return jsonResponse({ ok: true });
-    } catch (error) { return jsonResponse({ error: String(error) }, 409); }
+    } catch (error) { return errorResponse(error, 409); }
   }
   if (taskMatch && request.method === "PATCH") {
     try {
@@ -218,7 +223,7 @@ async function handleApi(request: Request): Promise<Response | null> {
       const body = await request.json() as TaskPatch;
       if (!body || Array.isArray(body) || typeof body !== "object") throw new Error("Invalid task patch");
       return jsonResponse(getTaskStore().updateTask(taskMatch[1], body));
-    } catch (error) { return jsonResponse({ error: String(error) }, 400); }
+    } catch (error) { return errorResponse(error, 400); }
   }
 
   const taskRuns = /^\/api\/tasks\/([^/]+)\/runs$/.exec(path);
@@ -231,7 +236,7 @@ async function handleApi(request: Request): Promise<Response | null> {
       if (!getTaskStore().getTask(taskRunsPreview[1])) return jsonResponse({ error: "Task not found" }, 404);
       const preview: ScopePreview = getAgentRuns().preview(taskRunsPreview[1], provider);
       return jsonResponse(preview);
-    } catch (error) { return jsonResponse({ error: String(error) }, 400); }
+    } catch (error) { return errorResponse(error, 400); }
   }
   if (taskRuns && request.method === "GET") {
     return jsonResponse(getTaskStore().listRuns(taskRuns[1]));
@@ -264,7 +269,7 @@ async function handleApi(request: Request): Promise<Response | null> {
       if (!readiness.installed || readiness.auth === "signed-out") return jsonResponse({ error: readiness.message }, 409);
       const id = await getAgentRuns().start(taskRuns[1], { provider, model: body.model as string | undefined, followup: body.followup as string | undefined });
       return jsonResponse({ id }, 201);
-    } catch (error) { return jsonResponse({ error: String(error) }, 409); }
+    } catch (error) { return errorResponse(error, 409); }
   }
 
   const acknowledge = /^\/api\/sessions\/([^/]+)\/acknowledge$/.exec(path);
@@ -317,7 +322,7 @@ async function handleApi(request: Request): Promise<Response | null> {
     const session = getTaskStore().getRun(stopMatch[1]);
     if (!session) return jsonResponse({ error: "not found" }, 404);
     try { await getAgentRuns().stop(session.id); }
-    catch (error) { return jsonResponse({ error: String(error) }, 409); }
+    catch (error) { return errorResponse(error, 409); }
     return jsonResponse({ ok: true });
   }
 
@@ -336,8 +341,7 @@ async function handleApi(request: Request): Promise<Response | null> {
       const id = await getAgentRuns().start(run.taskId, { provider: run.provider, followup: body.task });
       return jsonResponse({ id }, 201);
     } catch (error) {
-      console.error(describeError(error));
-      return jsonResponse({ error: describeError(error).slice(0, 200) }, 500);
+      return errorResponse(error, 500);
     }
   }
 
@@ -497,8 +501,7 @@ async function handleApi(request: Request): Promise<Response | null> {
       const result = await startDevServer(body.project);
       return jsonResponse(result, 201);
     } catch (error) {
-      console.error(describeError(error));
-      return jsonResponse({ error: describeError(error).slice(0, 200) }, 500);
+      return errorResponse(error, 500);
     }
   }
 
@@ -521,8 +524,7 @@ async function handleApi(request: Request): Promise<Response | null> {
       await browserGoto(body.url);
       return jsonResponse({ ok: true, url: await currentUrl() });
     } catch (error) {
-      console.error(describeError(error));
-      return jsonResponse({ error: describeError(error).slice(0, 300) }, 500);
+      return errorResponse(error, 500);
     }
   }
 
@@ -535,8 +537,7 @@ async function handleApi(request: Request): Promise<Response | null> {
       await browserAct(body.action, body.target, typeof body.value === "string" ? body.value : undefined);
       return jsonResponse({ ok: true });
     } catch (error) {
-      console.error(describeError(error));
-      return jsonResponse({ error: describeError(error).slice(0, 200) }, 500);
+      return errorResponse(error, 500);
     }
   }
 
