@@ -204,7 +204,7 @@ export class GitWorkspaceService {
     if (record.state === "removed") return record;
     this.idle([record.path]);
     if (existsSync(record.path)) {
-      await this.assertRunWorktree(record);
+      await this.assertRunWorktree(record, this.signal);
       if (await git(record.path, ["status", "--porcelain", "--untracked-files=all", "--ignored"], this.signal)) throw new Error("Workspace contains local or ignored files. Preserve them before removing it.");
       await git(record.source, ["worktree", "remove", "--", record.path], this.signal);
     } else {
@@ -220,7 +220,7 @@ export class GitWorkspaceService {
     if (!record || record.taskId !== task.id) throw new Error("Run worktree not found");
     if (record.state !== "ready") throw new Error("Run worktree is not ready");
     this.idle([record.path]);
-    await this.assertRunWorktree(record);
+    await this.assertRunWorktree(record, this.signal);
     return {
       head: await git(record.path, ["rev-parse", "HEAD"], this.signal), branch: record.branch,
       status: await git(record.path, ["status", "--short", "--untracked-files=all"], this.signal),
@@ -235,7 +235,7 @@ export class GitWorkspaceService {
     if (record.state !== "ready") throw new Error("Run worktree is not ready");
     if (canonical(record.path) !== this.runWorktreePath(task.id, runId)) throw new Error("Workspace is outside its managed location");
     this.idle([record.source, record.path]);
-    await this.assertRunWorktree(record);
+    await this.assertRunWorktree(record, this.signal);
     if (!/^[a-f0-9]{40,64}$/.test(head) || await git(record.path, ["rev-parse", "HEAD"], this.signal) !== head) throw new Error("Review is stale. Refresh changes before merging.");
     if (await git(record.path, ["status", "--porcelain", "--untracked-files=all"], this.signal)) throw new Error("Commit task changes and review again before merging");
     if (await git(record.source, ["symbolic-ref", "--short", "HEAD"], this.signal) !== record.sourceBranch) throw new Error("Source branch changed. Restore the target branch before merging.");
