@@ -35,11 +35,11 @@ jobs:
       - name: Run tests
         run: bun run test
 
-      - name: Typecheck
-        run: bunx tsc --noEmit
-
       - name: Build
         run: bun run build
+
+      - name: Typecheck
+        run: bunx tsc --noEmit
 
   codeql:
     name: CodeQL security analysis
