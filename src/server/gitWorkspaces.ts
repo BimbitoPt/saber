@@ -47,6 +47,13 @@ async function assertWorkspace(workspace: TaskWorkspaceRecord, signal?: AbortSig
   await assertGitWorktree(workspace.path, workspace.source, workspace.branch, signal);
 }
 
+async function assertMergePreconditions(path: string, source: string, sourceBranch: string, head: string, signal?: AbortSignal) {
+  if (!/^[a-f0-9]{40,64}$/.test(head) || await git(path, ["rev-parse", "HEAD"], signal) !== head) throw new Error("Review is stale. Refresh changes before merging.");
+  if (await git(path, ["status", "--porcelain", "--untracked-files=all"], signal)) throw new Error("Commit task changes and review again before merging");
+  if (await git(source, ["symbolic-ref", "--short", "HEAD"], signal) !== sourceBranch) throw new Error("Source branch changed. Restore the target branch before merging.");
+  if (await git(source, ["status", "--porcelain", "--untracked-files=all"], signal)) throw new Error("Source checkout has local changes. Preserve them before merging.");
+}
+
 export async function taskWorkdir(task: TaskRecord, signal?: AbortSignal) {
   if (!task.workspace) return task.project;
   await assertWorkspace(task.workspace, signal);
@@ -139,10 +146,7 @@ export class GitWorkspaceService {
     const workspace = this.owned(task);
     this.idle([workspace.source, workspace.path]);
     await assertWorkspace(workspace, this.signal);
-    if (!/^[a-f0-9]{40,64}$/.test(head) || await git(workspace.path, ["rev-parse", "HEAD"], this.signal) !== head) throw new Error("Review is stale. Refresh changes before merging.");
-    if (await git(workspace.path, ["status", "--porcelain", "--untracked-files=all"], this.signal)) throw new Error("Commit task changes and review again before merging");
-    if (await git(workspace.source, ["symbolic-ref", "--short", "HEAD"], this.signal) !== workspace.targetBranch) throw new Error("Source branch changed. Restore the target branch before merging.");
-    if (await git(workspace.source, ["status", "--porcelain", "--untracked-files=all"], this.signal)) throw new Error("Source checkout has local changes. Preserve them before merging.");
+    await assertMergePreconditions(workspace.path, workspace.source, workspace.targetBranch, head, this.signal);
     await git(workspace.source, ["merge", "--ff-only", "--no-edit", "--no-overwrite-ignore", head], this.signal);
     return task;
   }
@@ -238,10 +242,7 @@ export class GitWorkspaceService {
     if (canonical(record.path) !== this.runWorktreePath(task.id, runId)) throw new Error("Workspace is outside its managed location");
     this.idle([record.source, record.path]);
     await this.assertRunWorktree(record, this.signal);
-    if (!/^[a-f0-9]{40,64}$/.test(head) || await git(record.path, ["rev-parse", "HEAD"], this.signal) !== head) throw new Error("Review is stale. Refresh changes before merging.");
-    if (await git(record.path, ["status", "--porcelain", "--untracked-files=all"], this.signal)) throw new Error("Commit task changes and review again before merging");
-    if (await git(record.source, ["symbolic-ref", "--short", "HEAD"], this.signal) !== record.sourceBranch) throw new Error("Source branch changed. Restore the target branch before merging.");
-    if (await git(record.source, ["status", "--porcelain", "--untracked-files=all"], this.signal)) throw new Error("Source checkout has local changes. Preserve them before merging.");
+    await assertMergePreconditions(record.path, record.source, record.sourceBranch, head, this.signal);
     await git(record.source, ["merge", "--ff-only", "--no-edit", "--no-overwrite-ignore", head], this.signal);
     let cleanedUp = true;
     try {
