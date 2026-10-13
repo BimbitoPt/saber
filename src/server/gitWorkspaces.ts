@@ -1,5 +1,8 @@
-import { execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { existsSync, mkdirSync, realpathSync } from "node:fs";
+
+const execFileAsync = promisify(execFile);
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import type { TaskRecord, TaskWorkspaceRecord, WorkspaceReview, RunWorktreeRecord } from "../lib/tasks";
@@ -12,40 +15,47 @@ const canonical = (path: string) => {
   return process.platform === "win32" ? result.toLowerCase() : result;
 };
 
-function git(cwd: string, args: string[]) {
+type GitCommandResult = { stdout: string; stderr: string; code: number };
+
+async function runGitCommand(cwd: string, args: string[], signal?: AbortSignal): Promise<GitCommandResult> {
   try {
-    return execFileSync("git", ["-C", cwd, ...args], {
-      encoding: "utf8", windowsHide: true, timeout: 15000, maxBuffer: 2 * 1024 * 1024,
-      stdio: ["ignore", "pipe", "pipe"],
-    }).trimEnd();
+    const result = await execFileAsync("git", ["-C", cwd, ...args], {
+      encoding: "utf8", windowsHide: true, timeout: 15000, maxBuffer: 2 * 1024 * 1024, signal,
+    });
+    return { stdout: result.stdout, stderr: result.stderr, code: 0 };
   } catch (error) {
-    const failure = error as { stderr?: string; code?: string };
-    throw new Error(failure.code === "ENOBUFS" ? "Git output is too large to review in Saber. Review it locally."
-      : `Git operation failed: ${String(failure.stderr || failure.code || error).slice(0, 1500)}`);
+    const failure = error as { stderr?: string; code?: string | number };
+    if (signal?.aborted) throw new Error("Git operation was cancelled");
+    if (failure.code === "ENOBUFS") throw new Error("Git output is too large to review in Saber. Review it locally.");
+    throw new Error(`Git operation failed: ${String(failure.stderr || failure.code || error).slice(0, 1500)}`);
   }
 }
 
-function assertWorkspace(workspace: TaskWorkspaceRecord) {
-  if (workspace.state !== "ready") throw new Error("Task workspace is not ready. Create or recover it before launching.");
-  if (!existsSync(workspace.path)) throw new Error("Task workspace is missing. Restore it before launching; Saber will not use the source checkout.");
-  if (canonical(git(workspace.path, ["rev-parse", "--show-toplevel"])) !== canonical(workspace.path)) throw new Error("Workspace root changed");
-  if (git(workspace.path, ["symbolic-ref", "--short", "HEAD"]) !== workspace.branch) throw new Error("Workspace branch changed. Restore the task branch first.");
-  if (canonical(git(workspace.path, ["rev-parse", "--path-format=absolute", "--git-common-dir"])) !== canonical(git(workspace.source, ["rev-parse", "--path-format=absolute", "--git-common-dir"]))) throw new Error("Workspace repository changed");
+async function git(cwd: string, args: string[], signal?: AbortSignal): Promise<string> {
+  return (await runGitCommand(cwd, args, signal)).stdout.trimEnd();
 }
 
-export function taskWorkdir(task: TaskRecord) {
+async function assertWorkspace(workspace: TaskWorkspaceRecord) {
+  if (workspace.state !== "ready") throw new Error("Task workspace is not ready. Create or recover it before launching.");
+  if (!existsSync(workspace.path)) throw new Error("Task workspace is missing. Restore it before launching; Saber will not use the source checkout.");
+  if (canonical(await git(workspace.path, ["rev-parse", "--show-toplevel"])) !== canonical(workspace.path)) throw new Error("Workspace root changed");
+  if (await git(workspace.path, ["symbolic-ref", "--short", "HEAD"]) !== workspace.branch) throw new Error("Workspace branch changed. Restore the task branch first.");
+  if (canonical(await git(workspace.path, ["rev-parse", "--path-format=absolute", "--git-common-dir"])) !== canonical(await git(workspace.source, ["rev-parse", "--path-format=absolute", "--git-common-dir"]))) throw new Error("Workspace repository changed");
+}
+
+export async function taskWorkdir(task: TaskRecord) {
   if (!task.workspace) return task.project;
-  assertWorkspace(task.workspace);
+  await assertWorkspace(task.workspace);
   return task.workspace.path;
 }
 
-export function taskSourceRoot(task: TaskRecord) {
+export async function taskSourceRoot(task: TaskRecord) {
   if (task.workspace) {
     if (task.workspace.state !== "ready") throw new Error("Task workspace is not ready. Create or recover it before launching.");
-    assertWorkspace(task.workspace);
+    await assertWorkspace(task.workspace);
     return task.workspace.source;
   }
-  const source = realpathSync(git(task.project, ["rev-parse", "--show-toplevel"]));
+  const source = realpathSync(await git(task.project, ["rev-parse", "--show-toplevel"]));
   if (canonical(source) !== canonical(task.project)) throw new Error("Use the Git checkout root as the task project to create a worktree");
   return source;
 }
@@ -73,17 +83,17 @@ export class GitWorkspaceService {
     return workspace;
   }
 
-  create(id: string) {
+  async create(id: string) {
     const task = this.task(id);
     this.idle([task.project, ...(task.workspace ? [task.workspace.path] : [])]);
     if (task.workspace?.state === "removed") throw new Error("This workspace was removed. Create a new task to continue; the branch and history are preserved.");
-    if (task.workspace?.state === "ready") { this.owned(task); assertWorkspace(task.workspace); return task; }
+    if (task.workspace?.state === "ready") { this.owned(task); await assertWorkspace(task.workspace); return task; }
     let workspace = task.workspace;
     if (!workspace) {
-      const source = realpathSync(git(task.project, ["rev-parse", "--show-toplevel"]));
+      const source = realpathSync(await git(task.project, ["rev-parse", "--show-toplevel"]));
       if (canonical(source) !== canonical(task.project)) throw new Error("Use the Git checkout root as the task project to create a worktree");
-      const baseCommit = git(source, ["rev-parse", "--verify", "HEAD^{commit}"]);
-      const targetBranch = git(source, ["symbolic-ref", "--short", "HEAD"]);
+      const baseCommit = await git(source, ["rev-parse", "--verify", "HEAD^{commit}"]);
+      const targetBranch = await git(source, ["symbolic-ref", "--short", "HEAD"]);
       mkdirSync(this.root, { recursive: true });
       workspace = { source, path: join(realpathSync(this.root), task.id), baseCommit, targetBranch,
         branch: `codex/saber-${task.id}`, state: "provisioning" };
@@ -91,59 +101,59 @@ export class GitWorkspaceService {
     }
     this.owned({ ...task, workspace });
     if (!existsSync(workspace.path)) {
-      const registered = git(workspace.source, ["worktree", "list", "--porcelain"]);
+      const registered = await git(workspace.source, ["worktree", "list", "--porcelain"]);
       if (registered.split("\n").some((line) => line.startsWith("worktree ") && canonical(line.slice(9)) === canonical(workspace.path))) {
         throw new Error("A registered workspace is missing. Restore it or repair its Git registration before retrying.");
       }
-      const existing = git(workspace.source, ["branch", "--list", workspace.branch]);
+      const existing = await git(workspace.source, ["branch", "--list", workspace.branch]);
       if (existing) {
-        if (git(workspace.source, ["rev-parse", workspace.branch]) !== workspace.baseCommit) throw new Error("Recovery branch has changes. Restore its worktree manually to preserve them.");
-        git(workspace.source, ["worktree", "add", "--", workspace.path, workspace.branch]);
+        if (await git(workspace.source, ["rev-parse", workspace.branch]) !== workspace.baseCommit) throw new Error("Recovery branch has changes. Restore its worktree manually to preserve them.");
+        await git(workspace.source, ["worktree", "add", "--", workspace.path, workspace.branch]);
       } else {
-        git(workspace.source, ["worktree", "add", "-b", workspace.branch, "--", workspace.path, workspace.baseCommit]);
+        await git(workspace.source, ["worktree", "add", "-b", workspace.branch, "--", workspace.path, workspace.baseCommit]);
       }
     }
     const ready = { ...workspace, state: "ready" as const };
-    assertWorkspace(ready);
+    await assertWorkspace(ready);
     return this.store.setWorkspace(id, ready);
   }
 
-  review(id: string): WorkspaceReview {
+  async review(id: string): Promise<WorkspaceReview> {
     const task = this.task(id);
     const workspace = this.owned(task);
     this.idle([workspace.path]);
-    assertWorkspace(workspace);
+    await assertWorkspace(workspace);
     return {
-      head: git(workspace.path, ["rev-parse", "HEAD"]), branch: workspace.branch,
-      status: git(workspace.path, ["status", "--short", "--untracked-files=all"]),
-      diff: git(workspace.path, ["diff", "--no-ext-diff", "--no-textconv", workspace.baseCommit, "--"]),
+      head: await git(workspace.path, ["rev-parse", "HEAD"]), branch: workspace.branch,
+      status: await git(workspace.path, ["status", "--short", "--untracked-files=all"]),
+      diff: await git(workspace.path, ["diff", "--no-ext-diff", "--no-textconv", workspace.baseCommit, "--"]),
     };
   }
 
-  merge(id: string, head: string) {
+  async merge(id: string, head: string) {
     const task = this.task(id);
     const workspace = this.owned(task);
     this.idle([workspace.source, workspace.path]);
-    assertWorkspace(workspace);
-    if (!/^[a-f0-9]{40,64}$/.test(head) || git(workspace.path, ["rev-parse", "HEAD"]) !== head) throw new Error("Review is stale. Refresh changes before merging.");
-    if (git(workspace.path, ["status", "--porcelain", "--untracked-files=all"])) throw new Error("Commit task changes and review again before merging");
-    if (git(workspace.source, ["symbolic-ref", "--short", "HEAD"]) !== workspace.targetBranch) throw new Error("Source branch changed. Restore the target branch before merging.");
-    if (git(workspace.source, ["status", "--porcelain", "--untracked-files=all"])) throw new Error("Source checkout has local changes. Preserve them before merging.");
-    git(workspace.source, ["merge", "--ff-only", "--no-edit", "--no-overwrite-ignore", head]);
+    await assertWorkspace(workspace);
+    if (!/^[a-f0-9]{40,64}$/.test(head) || await git(workspace.path, ["rev-parse", "HEAD"]) !== head) throw new Error("Review is stale. Refresh changes before merging.");
+    if (await git(workspace.path, ["status", "--porcelain", "--untracked-files=all"])) throw new Error("Commit task changes and review again before merging");
+    if (await git(workspace.source, ["symbolic-ref", "--short", "HEAD"]) !== workspace.targetBranch) throw new Error("Source branch changed. Restore the target branch before merging.");
+    if (await git(workspace.source, ["status", "--porcelain", "--untracked-files=all"])) throw new Error("Source checkout has local changes. Preserve them before merging.");
+    await git(workspace.source, ["merge", "--ff-only", "--no-edit", "--no-overwrite-ignore", head]);
     return task;
   }
 
-  remove(id: string) {
+  async remove(id: string) {
     const task = this.task(id);
     const workspace = this.owned(task);
     this.idle([workspace.path]);
     if (workspace.state === "removed") return task;
     if (existsSync(workspace.path)) {
-      assertWorkspace(workspace);
-      if (git(workspace.path, ["status", "--porcelain", "--untracked-files=all", "--ignored"])) throw new Error("Workspace contains local or ignored files. Preserve them before removing it.");
-      git(workspace.source, ["worktree", "remove", "--", workspace.path]);
+      await assertWorkspace(workspace);
+      if (await git(workspace.path, ["status", "--porcelain", "--untracked-files=all", "--ignored"])) throw new Error("Workspace contains local or ignored files. Preserve them before removing it.");
+      await git(workspace.source, ["worktree", "remove", "--", workspace.path]);
     } else {
-      const registered = git(workspace.source, ["worktree", "list", "--porcelain"]);
+      const registered = await git(workspace.source, ["worktree", "list", "--porcelain"]);
       if (registered.split("\n").some((line) => line.startsWith("worktree ") && canonical(line.slice(9)) === canonical(workspace.path))) throw new Error("Missing workspace is still registered. Restore it before removing it.");
     }
     return this.store.setWorkspace(id, { ...workspace, state: "removed" });
@@ -153,40 +163,40 @@ export class GitWorkspaceService {
     return canonical(join(this.root, taskId, "runs", runId));
   }
 
-  private assertRunWorktree(record: RunWorktreeRecord) {
-    if (canonical(git(record.path, ["rev-parse", "--show-toplevel"])) !== canonical(record.path)) throw new Error("Workspace root changed");
-    if (git(record.path, ["symbolic-ref", "--short", "HEAD"]) !== record.branch) throw new Error("Workspace branch changed. Restore the task branch first.");
-    if (canonical(git(record.path, ["rev-parse", "--path-format=absolute", "--git-common-dir"])) !== canonical(git(record.source, ["rev-parse", "--path-format=absolute", "--git-common-dir"]))) throw new Error("Workspace repository changed");
+  private async assertRunWorktree(record: RunWorktreeRecord) {
+    if (canonical(await git(record.path, ["rev-parse", "--show-toplevel"])) !== canonical(record.path)) throw new Error("Workspace root changed");
+    if (await git(record.path, ["symbolic-ref", "--short", "HEAD"]) !== record.branch) throw new Error("Workspace branch changed. Restore the task branch first.");
+    if (canonical(await git(record.path, ["rev-parse", "--path-format=absolute", "--git-common-dir"])) !== canonical(await git(record.source, ["rev-parse", "--path-format=absolute", "--git-common-dir"]))) throw new Error("Workspace repository changed");
   }
 
-  createRunWorktree(taskId: string, runId: string) {
+  async createRunWorktree(taskId: string, runId: string) {
     const task = this.task(taskId);
-    const source = taskSourceRoot(task);
+    const source = await taskSourceRoot(task);
     this.idle([task.project, source]);
-    const baseCommit = git(source, ["rev-parse", "--verify", "HEAD^{commit}"]);
-    const sourceBranch = git(source, ["symbolic-ref", "--short", "HEAD"]);
+    const baseCommit = await git(source, ["rev-parse", "--verify", "HEAD^{commit}"]);
+    const sourceBranch = await git(source, ["symbolic-ref", "--short", "HEAD"]);
     const branch = `saber/${task.id.slice(0, 8)}/${runId.slice(0, 8)}`;
     const path = this.runWorktreePath(task.id, runId);
     mkdirSync(join(this.root, task.id, "runs"), { recursive: true });
     if (!existsSync(path)) {
-      const registered = git(source, ["worktree", "list", "--porcelain"]);
+      const registered = await git(source, ["worktree", "list", "--porcelain"]);
       if (registered.split("\n").some((line) => line.startsWith("worktree ") && canonical(line.slice(9)) === canonical(path))) {
         throw new Error("A registered workspace is missing. Restore it or repair its Git registration before retrying.");
       }
-      const existing = git(source, ["branch", "--list", branch]);
+      const existing = await git(source, ["branch", "--list", branch]);
       if (existing) {
-        if (git(source, ["rev-parse", branch]) !== baseCommit) throw new Error("Recovery branch has changes. Restore its worktree manually to preserve them.");
-        git(source, ["worktree", "add", "--", path, branch]);
+        if (await git(source, ["rev-parse", branch]) !== baseCommit) throw new Error("Recovery branch has changes. Restore its worktree manually to preserve them.");
+        await git(source, ["worktree", "add", "--", path, branch]);
       } else {
-        git(source, ["worktree", "add", "-b", branch, "--", path, baseCommit]);
+        await git(source, ["worktree", "add", "-b", branch, "--", path, baseCommit]);
       }
     }
     const record: RunWorktreeRecord = { runId, taskId: task.id, path, source, sourceBranch, baseCommit, branch, state: "ready" };
-    this.assertRunWorktree(record);
+    await this.assertRunWorktree(record);
     return this.store.createRunWorktree(record);
   }
 
-  removeRunWorktree(taskId: string, runId: string) {
+  async removeRunWorktree(taskId: string, runId: string) {
     const task = this.task(taskId);
     const record = this.store.getRunWorktree(runId);
     if (!record || record.taskId !== task.id) throw new Error("Run worktree not found");
@@ -194,46 +204,46 @@ export class GitWorkspaceService {
     if (record.state === "removed") return record;
     this.idle([record.path]);
     if (existsSync(record.path)) {
-      this.assertRunWorktree(record);
-      if (git(record.path, ["status", "--porcelain", "--untracked-files=all", "--ignored"])) throw new Error("Workspace contains local or ignored files. Preserve them before removing it.");
-      git(record.source, ["worktree", "remove", "--", record.path]);
+      await this.assertRunWorktree(record);
+      if (await git(record.path, ["status", "--porcelain", "--untracked-files=all", "--ignored"])) throw new Error("Workspace contains local or ignored files. Preserve them before removing it.");
+      await git(record.source, ["worktree", "remove", "--", record.path]);
     } else {
-      const registered = git(record.source, ["worktree", "list", "--porcelain"]);
+      const registered = await git(record.source, ["worktree", "list", "--porcelain"]);
       if (registered.split("\n").some((line) => line.startsWith("worktree ") && canonical(line.slice(9)) === canonical(record.path))) throw new Error("Missing workspace is still registered. Restore it before removing it.");
     }
     return this.store.writeRunWorktree({ ...record, state: "removed" });
   }
 
-  reviewRunWorktree(taskId: string, runId: string): WorkspaceReview {
+  async reviewRunWorktree(taskId: string, runId: string): Promise<WorkspaceReview> {
     const task = this.task(taskId);
     const record = this.store.getRunWorktree(runId);
     if (!record || record.taskId !== task.id) throw new Error("Run worktree not found");
     if (record.state !== "ready") throw new Error("Run worktree is not ready");
     this.idle([record.path]);
-    this.assertRunWorktree(record);
+    await this.assertRunWorktree(record);
     return {
-      head: git(record.path, ["rev-parse", "HEAD"]), branch: record.branch,
-      status: git(record.path, ["status", "--short", "--untracked-files=all"]),
-      diff: git(record.path, ["diff", "--no-ext-diff", "--no-textconv", record.baseCommit, "--"]),
+      head: await git(record.path, ["rev-parse", "HEAD"]), branch: record.branch,
+      status: await git(record.path, ["status", "--short", "--untracked-files=all"]),
+      diff: await git(record.path, ["diff", "--no-ext-diff", "--no-textconv", record.baseCommit, "--"]),
     };
   }
 
-  mergeRunWorktree(taskId: string, runId: string, head: string) {
+  async mergeRunWorktree(taskId: string, runId: string, head: string) {
     const task = this.task(taskId);
     const record = this.store.getRunWorktree(runId);
     if (!record || record.taskId !== task.id) throw new Error("Run worktree not found");
     if (record.state !== "ready") throw new Error("Run worktree is not ready");
     if (canonical(record.path) !== this.runWorktreePath(task.id, runId)) throw new Error("Workspace is outside its managed location");
     this.idle([record.source, record.path]);
-    this.assertRunWorktree(record);
-    if (!/^[a-f0-9]{40,64}$/.test(head) || git(record.path, ["rev-parse", "HEAD"]) !== head) throw new Error("Review is stale. Refresh changes before merging.");
-    if (git(record.path, ["status", "--porcelain", "--untracked-files=all"])) throw new Error("Commit task changes and review again before merging");
-    if (git(record.source, ["symbolic-ref", "--short", "HEAD"]) !== record.sourceBranch) throw new Error("Source branch changed. Restore the target branch before merging.");
-    if (git(record.source, ["status", "--porcelain", "--untracked-files=all"])) throw new Error("Source checkout has local changes. Preserve them before merging.");
-    git(record.source, ["merge", "--ff-only", "--no-edit", "--no-overwrite-ignore", head]);
+    await this.assertRunWorktree(record);
+    if (!/^[a-f0-9]{40,64}$/.test(head) || await git(record.path, ["rev-parse", "HEAD"]) !== head) throw new Error("Review is stale. Refresh changes before merging.");
+    if (await git(record.path, ["status", "--porcelain", "--untracked-files=all"])) throw new Error("Commit task changes and review again before merging");
+    if (await git(record.source, ["symbolic-ref", "--short", "HEAD"]) !== record.sourceBranch) throw new Error("Source branch changed. Restore the target branch before merging.");
+    if (await git(record.source, ["status", "--porcelain", "--untracked-files=all"])) throw new Error("Source checkout has local changes. Preserve them before merging.");
+    await git(record.source, ["merge", "--ff-only", "--no-edit", "--no-overwrite-ignore", head]);
     let cleanedUp = true;
     try {
-      this.removeRunWorktree(taskId, runId);
+      await this.removeRunWorktree(taskId, runId);
     } catch {
       cleanedUp = false;
     }
