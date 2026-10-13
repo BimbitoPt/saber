@@ -140,7 +140,7 @@ async function handleApi(request: Request): Promise<Response | null> {
   const workspaceMatch = /^\/api\/tasks\/([^/]+)\/workspace(\/merge)?$/.exec(path);
   if (workspaceMatch) {
     try {
-      const service = new GitWorkspaceService(getTaskStore(), (directory) => getAgentRuns().hasActiveWorkspace(directory));
+      const service = new GitWorkspaceService(getTaskStore(), (directory) => getAgentRuns().hasActiveWorkspace(directory), undefined, request.signal);
       const id = workspaceMatch[1];
       if (!getTaskStore().getTask(id)) return jsonResponse({ error: "Task not found" }, 404);
       if (workspaceMatch[2] && request.method === "POST") {
@@ -164,7 +164,7 @@ async function handleApi(request: Request): Promise<Response | null> {
     if (request.method === "GET") return jsonResponse(store.listTerminalSessions(task.id));
     if (request.method === "POST") {
       try {
-        const workdir = await taskWorkdir(task);
+        const workdir = await taskWorkdir(task, request.signal);
         const lock = getTerminalLocks().reserve(store, task.id, workdir);
         return jsonResponse(lock, 201);
       } catch (error) { return errorResponse(error, 409); }
@@ -230,7 +230,7 @@ async function handleApi(request: Request): Promise<Response | null> {
       const provider = (body.provider ?? "opencode") as ProviderId;
       if (!["opencode", "codex", "claude"].includes(provider)) return jsonResponse({ error: "Invalid provider" }, 400);
       if (!getTaskStore().getTask(taskRunsPreview[1])) return jsonResponse({ error: "Task not found" }, 404);
-      const preview: ScopePreview = await getAgentRuns().preview(taskRunsPreview[1], provider);
+      const preview: ScopePreview = await getAgentRuns().preview(taskRunsPreview[1], provider, request.signal);
       return jsonResponse(preview);
     } catch (error) { return errorResponse(error, 400); }
   }
@@ -263,7 +263,7 @@ async function handleApi(request: Request): Promise<Response | null> {
       const provider = (body.provider ?? "opencode") as ProviderId;
       const readiness = await providerStatus(provider);
       if (!readiness.installed || readiness.auth === "signed-out") return jsonResponse({ error: readiness.message }, 409);
-      const id = await getAgentRuns().start(taskRuns[1], { provider, model: body.model as string | undefined, followup: body.followup as string | undefined });
+      const id = await getAgentRuns().start(taskRuns[1], { provider, model: body.model as string | undefined, followup: body.followup as string | undefined }, request.signal);
       return jsonResponse({ id }, 201);
     } catch (error) { return errorResponse(error, 409); }
   }
@@ -297,7 +297,7 @@ async function handleApi(request: Request): Promise<Response | null> {
     }
     try {
       const record = getTaskStore().createTask({ project: resolveWorkdir(project), title: task.slice(0, 120), spec: task, criteria: "Report the changes and verification results." });
-      const id = await getAgentRuns().start(record.id, { model });
+      const id = await getAgentRuns().start(record.id, { model }, request.signal);
       return jsonResponse({ id }, 201);
     } catch (error) {
       console.error(describeError(error));
@@ -334,7 +334,7 @@ async function handleApi(request: Request): Promise<Response | null> {
       if (!run) return jsonResponse({ error: "not found" }, 404);
       const readiness = await providerStatus(run.provider);
       if (!readiness.installed || readiness.auth === "signed-out") return jsonResponse({ error: readiness.message }, 409);
-      const id = await getAgentRuns().start(run.taskId, { provider: run.provider, followup: body.task });
+      const id = await getAgentRuns().start(run.taskId, { provider: run.provider, followup: body.task }, request.signal);
       return jsonResponse({ id }, 201);
     } catch (error) {
       return errorResponse(error, 500);
