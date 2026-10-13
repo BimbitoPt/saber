@@ -72,7 +72,7 @@ export class AgentRuns {
   async start(taskId: string, options: StartOptions = {}) {
     const task = this.store.getTask(taskId);
     if (!task) throw new Error("Task not found");
-    const workdir = options.workdir ?? taskWorkdir(task);
+    const workdir = options.workdir ?? await taskWorkdir(task);
     if (options.workdir && !isExistingDirectory(options.workdir)) throw new Error("Run workspace is not a directory");
     if (this.hasActiveWorkspace(workdir)) throw new Error("The previous process is still closing. Wait before launching again.");
     if (this.terminalLocks.hasActiveWorkspace(this.store, workdir)) throw new Error("An interactive terminal owns this workspace. Close it before launching an agent run.");
@@ -192,11 +192,11 @@ export class AgentRuns {
     };
   }
 
-  preview(taskId: string, providerId: ProviderId = "opencode"): ScopePreview {
+  async preview(taskId: string, providerId: ProviderId = "opencode"): Promise<ScopePreview> {
     const task = this.store.getTask(taskId);
     if (!task) throw new Error("Task not found");
     const adapter = this.provider(providerId);
-    const workdir = taskWorkdir(task);
+    const workdir = await taskWorkdir(task);
     const { revision, parts } = this.scopeParts(task, { id: DEFAULT_ROLE_ID, instructions: DEFAULT_ROLE_INSTRUCTIONS });
     const prompt = this.enhancePrompt(parts.map((part) => part.text).filter(Boolean).join("\n\n"), workdir);
     const sources = parts.map((part) => ({ name: part.name, chars: part.text.length }));
