@@ -35,12 +35,16 @@ async function git(cwd: string, args: string[], signal?: AbortSignal): Promise<s
   return (await runGitCommand(cwd, args, signal)).stdout.trimEnd();
 }
 
+async function assertGitWorktree(path: string, source: string, branch: string, signal?: AbortSignal) {
+  if (canonical(await git(path, ["rev-parse", "--show-toplevel"], signal)) !== canonical(path)) throw new Error("Workspace root changed");
+  if (await git(path, ["symbolic-ref", "--short", "HEAD"], signal) !== branch) throw new Error("Workspace branch changed. Restore the task branch first.");
+  if (canonical(await git(path, ["rev-parse", "--path-format=absolute", "--git-common-dir"], signal)) !== canonical(await git(source, ["rev-parse", "--path-format=absolute", "--git-common-dir"], signal))) throw new Error("Workspace repository changed");
+}
+
 async function assertWorkspace(workspace: TaskWorkspaceRecord, signal?: AbortSignal) {
   if (workspace.state !== "ready") throw new Error("Task workspace is not ready. Create or recover it before launching.");
   if (!existsSync(workspace.path)) throw new Error("Task workspace is missing. Restore it before launching; Saber will not use the source checkout.");
-  if (canonical(await git(workspace.path, ["rev-parse", "--show-toplevel"], signal)) !== canonical(workspace.path)) throw new Error("Workspace root changed");
-  if (await git(workspace.path, ["symbolic-ref", "--short", "HEAD"], signal) !== workspace.branch) throw new Error("Workspace branch changed. Restore the task branch first.");
-  if (canonical(await git(workspace.path, ["rev-parse", "--path-format=absolute", "--git-common-dir"], signal)) !== canonical(await git(workspace.source, ["rev-parse", "--path-format=absolute", "--git-common-dir"], signal))) throw new Error("Workspace repository changed");
+  await assertGitWorktree(workspace.path, workspace.source, workspace.branch, signal);
 }
 
 export async function taskWorkdir(task: TaskRecord, signal?: AbortSignal) {
@@ -164,9 +168,7 @@ export class GitWorkspaceService {
   }
 
   private async assertRunWorktree(record: RunWorktreeRecord, signal?: AbortSignal) {
-    if (canonical(await git(record.path, ["rev-parse", "--show-toplevel"], signal)) !== canonical(record.path)) throw new Error("Workspace root changed");
-    if (await git(record.path, ["symbolic-ref", "--short", "HEAD"], signal) !== record.branch) throw new Error("Workspace branch changed. Restore the task branch first.");
-    if (canonical(await git(record.path, ["rev-parse", "--path-format=absolute", "--git-common-dir"], signal)) !== canonical(await git(record.source, ["rev-parse", "--path-format=absolute", "--git-common-dir"], signal))) throw new Error("Workspace repository changed");
+    await assertGitWorktree(record.path, record.source, record.branch, signal);
   }
 
   async createRunWorktree(taskId: string, runId: string) {
