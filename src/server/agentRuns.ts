@@ -70,13 +70,12 @@ export class AgentRuns {
   constructor(private store: TaskStore, private provider: (name?: ProviderId) => AgentProvider = getProvider, private enhancePrompt = enhance, private terminalLocks: TerminalLocks = getTerminalLocks()) {}
 
   async start(taskId: string, options: StartOptions = {}) {
-    this.terminalLocks.hydrate(this.store);
     const task = this.store.getTask(taskId);
     if (!task) throw new Error("Task not found");
     const workdir = options.workdir ?? taskWorkdir(task);
     if (options.workdir && !isExistingDirectory(options.workdir)) throw new Error("Run workspace is not a directory");
     if (this.hasActiveWorkspace(workdir)) throw new Error("The previous process is still closing. Wait before launching again.");
-    if (this.terminalLocks.hasActiveWorkspace(workdir)) throw new Error("An interactive terminal owns this workspace. Close it before launching an agent run.");
+    if (this.terminalLocks.hasActiveWorkspace(this.store, workdir)) throw new Error("An interactive terminal owns this workspace. Close it before launching an agent run.");
     const providerId = options.provider ?? "opencode";
     const adapter = this.provider(providerId);
     const previous = this.store.listRuns(taskId).find((run) => run.provider === providerId && run.project === workdir && run.nativeSessionId);
