@@ -141,6 +141,15 @@ describe("isolated task workspaces", { timeout: 30000 }, () => {
     await expect(taskWorkdir(removed)).rejects.toThrow("not ready");
   });
 
+  it("cancels Git workspace commands when the request signal is aborted", async () => {
+    const { root, store, task } = setup();
+    const controller = new AbortController();
+    controller.abort();
+    const service = new GitWorkspaceService(store, () => false, join(root, "managed"), controller.signal);
+    await expect(service.create(task.id)).rejects.toThrow("cancelled");
+    expect(store.getTask(task.id)?.workspace).toBeUndefined();
+  });
+
   it("rejects non-Git tasks and missing or changed workspaces", async () => {
     const { root, store, task, service } = setup();
     const nonGit = store.createTask({ project: root, title: "Plain", spec: "work", criteria: "check" });
