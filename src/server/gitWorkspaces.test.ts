@@ -50,7 +50,7 @@ describe("isolated task workspaces", { timeout: 30000 }, () => {
     expect(readFileSync(join(isolated.workspace!.path, "tracked.txt"), "utf8")).toBe("base\n");
     expect(existsSync(join(isolated.workspace!.path, "private.txt"))).toBe(false);
     expect(readFileSync(join(source, "tracked.txt"), "utf8")).toBe("unfinished source\n");
-    expect(service.create(task.id).workspace).toEqual(isolated.workspace);
+    expect((await service.create(task.id)).workspace).toEqual(isolated.workspace);
   });
 
   it("allows parallel runs in separate worktrees and blocks same-worktree runs", async () => {
@@ -65,7 +65,7 @@ describe("isolated task workspaces", { timeout: 30000 }, () => {
     expect(store.getRun(b)?.project).toBe(second.workspace!.path);
     expect(spawn.mock.calls.map(([options]) => options.workdir)).toEqual([first.workspace!.path, second.workspace!.path]);
     await expect(runs.start(first.id)).rejects.toThrow("still closing");
-    expect(() => service.remove(first.id)).toThrow("running");
+    await expect(service.remove(first.id)).rejects.toThrow("running");
     store.finishRun(a, "interrupted", null);
     expect(() => store.createRun(first.id, "retry")).toThrow("interrupted");
   });
@@ -138,7 +138,7 @@ describe("isolated task workspaces", { timeout: 30000 }, () => {
     expect(existsSync(workspace.path)).toBe(false);
     expect(git(source, "rev-parse", workspace.branch)).toBe(workspace.baseCommit);
     expect(store.getRun(run.id)?.project).toBe(workspace.path);
-    expect(() => taskWorkdir(removed)).toThrow("not ready");
+    await expect(taskWorkdir(removed)).rejects.toThrow("not ready");
   });
 
   it("rejects non-Git tasks and missing or changed workspaces", () => {
@@ -147,10 +147,10 @@ describe("isolated task workspaces", { timeout: 30000 }, () => {
     expect(() => service.create(nonGit.id)).toThrow("Git operation failed");
     const isolated = service.create(task.id);
     git(isolated.workspace!.path, "checkout", "--detach");
-    expect(() => taskWorkdir(isolated)).toThrow("Git operation failed");
+    await expect(taskWorkdir(isolated)).rejects.toThrow("Git operation failed");
     git(isolated.workspace!.path, "checkout", isolated.workspace!.branch);
     git(isolated.workspace!.source, "worktree", "remove", isolated.workspace!.path);
-    expect(() => taskWorkdir(isolated)).toThrow("missing");
+    await expect(taskWorkdir(isolated)).rejects.toThrow("missing");
   });
 });
 
