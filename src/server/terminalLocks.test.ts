@@ -14,6 +14,7 @@ describe("terminal workspace locks", () => {
       expect(() => locks.reserve(store, second.id, second.project)).toThrow("Another terminal session");
       const isolatedLock = locks.reserve(store, isolated.id, isolated.project);
       expect(locks.hasActiveWorkspace(store, first.project)).toBe(true);
+
       store.setTerminalSessionStatus(firstLock.id, "stopped");
       expect(locks.hasActiveWorkspace(store, first.project)).toBe(false);
       store.setTerminalSessionStatus(isolatedLock.id, "stopped");
