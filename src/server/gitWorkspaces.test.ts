@@ -46,7 +46,7 @@ describe("isolated task workspaces", { timeout: 30000 }, () => {
     const { source, task, service } = setup();
     writeFileSync(join(source, "tracked.txt"), "unfinished source\n");
     writeFileSync(join(source, "private.txt"), "local\n");
-    const isolated = await await service.create(task.id);
+    const isolated = await service.create(task.id);
     expect(readFileSync(join(isolated.workspace!.path, "tracked.txt"), "utf8")).toBe("base\n");
     expect(existsSync(join(isolated.workspace!.path, "private.txt"))).toBe(false);
     expect(readFileSync(join(source, "tracked.txt"), "utf8")).toBe("unfinished source\n");
@@ -75,7 +75,7 @@ describe("isolated task workspaces", { timeout: 30000 }, () => {
     const old = store.createRun(task.id, "old", undefined, "codex");
     store.setNativeSession(old.id, "source-session");
     store.finishRun(old.id, "done", 0);
-    service.create(task.id);
+    await service.create(task.id);
     const spawn = vi.fn<AgentProvider["spawn"]>();
     const runs = new AgentRuns(store, () => ({ name: "codex", contextBudget: { maxPromptChars: 200_000, supportsProfileContext: true }, readOnly: { supported: true, args: [] }, args: () => [], spawn }), (prompt) => prompt);
     await expect(runs.start(task.id, { provider: "codex", followup: "continue" })).rejects.toThrow("No codex session");
@@ -105,7 +105,7 @@ describe("isolated task workspaces", { timeout: 30000 }, () => {
 
   it("rejects non-fast-forward histories without modifying either branch", async () => {
     const { source, task, service } = setup();
-    const workspace = service.create(task.id).workspace!;
+    const workspace = (await service.create(task.id)).workspace!;
     writeFileSync(join(workspace.path, "task.txt"), "task");
     git(workspace.path, "add", "."); git(workspace.path, "commit", "-m", "task");
     writeFileSync(join(source, "source.txt"), "source");
@@ -117,17 +117,17 @@ describe("isolated task workspaces", { timeout: 30000 }, () => {
 
   it("does not overwrite ignored source files during merge", async () => {
     const { source, task, service } = setup();
-    const workspace = service.create(task.id).workspace!;
+    const workspace = (await service.create(task.id)).workspace!;
     mkdirSync(join(source, "cache")); writeFileSync(join(source, "cache", "local.txt"), "preserve me");
     mkdirSync(join(workspace.path, "cache")); writeFileSync(join(workspace.path, "cache", "local.txt"), "incoming");
     git(workspace.path, "add", "-f", "cache/local.txt"); git(workspace.path, "commit", "-m", "tracked cache");
-    expect(() => service.merge(task.id, service.review(task.id).head)).toThrow("Git operation failed");
+    await expect(service.merge(task.id, (await service.review(task.id)).head)).rejects.toThrow("Git operation failed");
     expect(readFileSync(join(source, "cache", "local.txt"), "utf8")).toBe("preserve me");
   });
 
   it("refuses ignored files during cleanup and preserves branch and history on removal", async () => {
     const { source, task, service, store } = setup();
-    const workspace = service.create(task.id).workspace!;
+    const workspace = (await service.create(task.id)).workspace!;
     mkdirSync(join(workspace.path, "cache")); writeFileSync(join(workspace.path, "cache", "keep"), "data");
     await expect(service.remove(task.id)).rejects.toThrow("ignored files");
     expect(existsSync(join(workspace.path, "cache", "keep"))).toBe(true);
@@ -145,7 +145,7 @@ describe("isolated task workspaces", { timeout: 30000 }, () => {
     const { root, store, task, service } = setup();
     const nonGit = store.createTask({ project: root, title: "Plain", spec: "work", criteria: "check" });
     await expect(service.create(nonGit.id)).rejects.toThrow("Git operation failed");
-    const isolated = service.create(task.id);
+    const isolated = await service.create(task.id);
     git(isolated.workspace!.path, "checkout", "--detach");
     await expect(taskWorkdir(isolated)).rejects.toThrow("Git operation failed");
     git(isolated.workspace!.path, "checkout", isolated.workspace!.branch);
