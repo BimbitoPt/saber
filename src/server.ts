@@ -240,7 +240,7 @@ async function handleApi(request: Request): Promise<Response | null> {
   const runReviewMatch = /^\/api\/tasks\/([^/]+)\/runs\/([^/]+)\/(review|merge)$/.exec(path);
   if (runReviewMatch && runReviewMatch[3] === "review" && request.method === "GET") {
     try {
-      const service = new GitWorkspaceService(getTaskStore(), (directory) => getAgentRuns().hasActiveWorkspace(directory));
+      const service = new GitWorkspaceService(getTaskStore(), (directory) => getAgentRuns().hasActiveWorkspace(directory), undefined, request.signal);
       return jsonResponse(await service.reviewRunWorktree(runReviewMatch[1], runReviewMatch[2]));
     } catch (error) { return profileError(error); }
   }
@@ -248,7 +248,7 @@ async function handleApi(request: Request): Promise<Response | null> {
     try {
       const body = await request.json() as { head?: unknown };
       if (!body || typeof body.head !== "string") return jsonResponse({ error: "A reviewed commit is required" }, 400);
-      const service = new GitWorkspaceService(getTaskStore(), (directory) => getAgentRuns().hasActiveWorkspace(directory));
+      const service = new GitWorkspaceService(getTaskStore(), (directory) => getAgentRuns().hasActiveWorkspace(directory), undefined, request.signal);
       return jsonResponse(await service.mergeRunWorktree(runReviewMatch[1], runReviewMatch[2], body.head));
     } catch (error) { return profileError(error); }
   }
