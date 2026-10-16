@@ -179,8 +179,7 @@ export class SpecialistTeams {
       throw new Error("Teams that edit files must include the implementer role");
     }
     const source = taskSourceRoot(task);
-    this.terminalLocks.hydrate(this.store);
-    if (this.terminalLocks.hasActiveWorkspace(source)) throw new Error("An interactive terminal owns this workspace. Close it before launching a team.");
+    if (this.terminalLocks.hasActiveWorkspace(this.store, source)) throw new Error("An interactive terminal owns this workspace. Close it before launching a team.");
     const conflict = this.store.listRuns().find((run) =>
       ["running", "interrupted"].includes(run.status) && workspacesOverlap(run.project, source));
     if (conflict) throw new Error(conflict.status === "interrupted"

@@ -17,10 +17,11 @@ describe("terminal workspace locks", () => {
       const firstLock = locks.reserve(store, first.id, first.project);
       expect(() => locks.reserve(store, second.id, second.project)).toThrow("Another terminal session");
       const isolatedLock = locks.reserve(store, isolated.id, isolated.project);
-      expect(locks.hasActiveWorkspace(first.project)).toBe(true);
-      expect(locks.release(firstLock.id)).toBe(true);
-      expect(locks.hasActiveWorkspace(first.project)).toBe(false);
-      expect(locks.release(isolatedLock.id)).toBe(true);
+      expect(locks.hasActiveWorkspace(store, first.project)).toBe(true);
+
+      store.setTerminalSessionStatus(firstLock.id, "stopped");
+      expect(locks.hasActiveWorkspace(store, first.project)).toBe(false);
+      store.setTerminalSessionStatus(isolatedLock.id, "stopped");
     } finally {
       store.close();
     }
@@ -65,8 +66,26 @@ describe("terminal workspace locks", () => {
       expect(() => restarted.reserve(store, second.id, second.project)).toThrow("Another terminal session");
 
       store.recoverTerminalSession(lock.id, true);
-      restarted.release(lock.id);
+      expect(restarted.hasActiveWorkspace(store, second.project)).toBe(false);
       expect(restarted.reserve(store, second.id, second.project).taskId).toBe(second.id);
+    } finally {
+      store.close();
+    }
+  });
+});
+
+describe("SQLite terminal ownership", () => {
+  it("reflects persisted status changes without hydrating or releasing an in-memory lock", () => {
+    const store = new TaskStore(":memory:");
+    try {
+      const task = store.createTask({ project: "C:/saber-locks/single-source", title: "Task", spec: "Work", criteria: "Done" });
+      const locks = new TerminalLocks();
+      const lock = locks.reserve(store, task.id, task.project);
+      expect(locks.hasActiveWorkspace(store, task.project)).toBe(true);
+
+      store.setTerminalSessionStatus(lock.id, "stopped");
+
+      expect(locks.hasActiveWorkspace(store, task.project)).toBe(false);
     } finally {
       store.close();
     }

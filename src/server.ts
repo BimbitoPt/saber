@@ -173,7 +173,6 @@ async function handleApi(request: Request): Promise<Response | null> {
   }
   if (path === "/api/terminals" && request.method === "GET") {
     const store = getTaskStore();
-    getTerminalLocks().hydrate(store);
     return jsonResponse(store.listTerminalSessions());
   }
   if (path === "/api/terminals/reconcile" && request.method === "POST") {
@@ -192,7 +191,6 @@ async function handleApi(request: Request): Promise<Response | null> {
     try {
       const store = getTaskStore();
       const record = store.setTerminalSessionStatus(runningTerminalMatch[1], "running");
-      getTerminalLocks().hydrate(store);
       return jsonResponse(record);
     } catch (error) { return errorResponse(error, 409); }
   }
@@ -201,7 +199,6 @@ async function handleApi(request: Request): Promise<Response | null> {
     try {
       const body = await request.json() as { confirmedStopped?: unknown };
       const record = getTaskStore().recoverTerminalSession(recoverTerminalMatch[1], body?.confirmedStopped === true);
-      getTerminalLocks().release(record.id);
       return jsonResponse(record);
     } catch (error) { return errorResponse(error, 409); }
   }
@@ -213,7 +210,6 @@ async function handleApi(request: Request): Promise<Response | null> {
       if (!record) return jsonResponse({ error: "Terminal session not found" }, 404);
       if (record.status === "interrupted") return jsonResponse({ error: "Confirm recovery for an interrupted terminal session" }, 409);
       store.setTerminalSessionStatus(record.id, "stopped");
-      getTerminalLocks().release(record.id);
       return jsonResponse({ ok: true });
     } catch (error) { return errorResponse(error, 409); }
   }

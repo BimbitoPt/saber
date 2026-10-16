@@ -214,7 +214,7 @@ export async function handleApiV1(request: Request, dependencies: ApiV1Dependenc
       if (!task.workspace || task.workspace.state !== "ready") return failure("conflict", "Task has no ready workspace to review.", 409, requestId);
       const review = dependencies.workspaceReview
         ? dependencies.workspaceReview(taskId)
-        : new GitWorkspaceService(store, (directory) => getAgentRuns().hasActiveWorkspace(directory) || getTerminalLocks().hasActiveWorkspace(directory)).review(taskId);
+        : new GitWorkspaceService(store, (directory) => getAgentRuns().hasActiveWorkspace(directory) || getTerminalLocks().hasActiveWorkspace(store, directory)).review(taskId);
       return envelope({ head: review.head, branch: review.branch, changedFileCount: review.status.split("\n").filter(Boolean).length });
     }
 
