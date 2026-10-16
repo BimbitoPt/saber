@@ -158,7 +158,7 @@ describe("agent runs", () => {
     await expect(service.start(task.id)).rejects.toThrow("largest source");
     expect(spawn).not.toHaveBeenCalled();
     expect(store.listRuns(task.id)).toHaveLength(0);
-    const preview = service.preview(task.id);
+    const preview = await service.preview(task.id);
     expect(preview.verdict).toBe("oversized");
     expect(preview.notice).toContain("largest source");
   });
@@ -171,7 +171,7 @@ describe("agent runs", () => {
     const service = new AgentRuns(store, unsupported, (prompt) => prompt);
     await expect(service.start(task.id)).rejects.toThrow("does not support profile context");
     expect(spawn).not.toHaveBeenCalled();
-    const preview = service.preview(task.id);
+    const preview = await service.preview(task.id);
     expect(preview.verdict).toBe("unsupported");
     expect(preview.notice).toContain("omit");
   });
@@ -197,7 +197,7 @@ describe("agent runs", () => {
       expect(run.task).toContain("Stack: Bun.");
       expect(run.task).not.toContain("top-secret-value");
       expect(run.task).not.toContain("secret-token-value");
-      const preview = service.preview(task.id);
+      const preview = await service.preview(task.id);
       expect(preview.verdict).toBe("ok");
       expect(JSON.stringify(preview)).not.toContain("top-secret-value");
       expect(JSON.stringify(preview)).not.toContain("secret-token-value");

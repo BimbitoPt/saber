@@ -467,7 +467,7 @@ async function handleApi(request: Request): Promise<Response | null> {
     try {
       const body = await request.json() as { members?: unknown };
       if (!body || !Array.isArray(body.members)) return jsonResponse({ error: "Team members are required" }, 400);
-      return jsonResponse(getSpecialistTeams().planTeam(teamMatch[1], body.members));
+      return jsonResponse(await getSpecialistTeams().planTeam(teamMatch[1], body.members));
     } catch (error) { return profileError(error); }
   }
   if (teamMatch && !teamMatch[2] && request.method === "POST") {
@@ -475,7 +475,7 @@ async function handleApi(request: Request): Promise<Response | null> {
       const body = await request.json() as { members?: unknown };
       if (!body || !Array.isArray(body.members)) return jsonResponse({ error: "Team members are required" }, 400);
       const planner = getSpecialistTeams();
-      const plan = planner.planTeam(teamMatch[1], body.members);
+      const plan = await planner.planTeam(teamMatch[1], body.members);
       for (const member of plan.members) {
         const readiness = await providerStatus(member.provider);
         if (!readiness.installed || readiness.auth === "signed-out") return jsonResponse({ error: readiness.message }, 409);
