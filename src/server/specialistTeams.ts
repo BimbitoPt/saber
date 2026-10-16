@@ -144,7 +144,7 @@ export class SpecialistTeams {
     return [...new Set(value as ProviderId[])];
   }
 
-  planTeam(taskId: string, selections: MemberSelection[]): TeamPlan {
+  async planTeam(taskId: string, selections: MemberSelection[]): Promise<TeamPlan> {
     const task = this.store.getTask(taskId);
     if (!task) throw new Error("Task not found");
     const activeTeam = this.store.listTeams(taskId).find((team) => team.members.some((member) => {
@@ -178,7 +178,7 @@ export class SpecialistTeams {
     if (members.some((member) => member.role.write) && !members.some((member) => member.role.id === "implementer" && member.role.enabled)) {
       throw new Error("Teams that edit files must include the implementer role");
     }
-    const source = taskSourceRoot(task);
+    const source = await taskSourceRoot(task);
     if (this.terminalLocks.hasActiveWorkspace(this.store, source)) throw new Error("An interactive terminal owns this workspace. Close it before launching a team.");
     const conflict = this.store.listRuns().find((run) =>
       ["running", "interrupted"].includes(run.status) && workspacesOverlap(run.project, source));
@@ -189,18 +189,18 @@ export class SpecialistTeams {
   }
 
   async launchTeam(taskId: string, selections: MemberSelection[]): Promise<TeamRecord> {
-    const plan = this.planTeam(taskId, selections);
+    const plan = await this.planTeam(taskId, selections);
     const runIds = plan.members.map(() => crypto.randomUUID());
     const reserved: string[] = [];
     try {
       for (const runId of runIds) {
-        this.git().createRunWorktree(taskId, runId);
+        await this.git().createRunWorktree(taskId, runId);
         reserved.push(runId);
       }
     } catch (error) {
       for (const runId of reserved) {
         try {
-          this.git().removeRunWorktree(taskId, runId);
+          await this.git().removeRunWorktree(taskId, runId);
         } catch {
           // Preserve the original reservation failure.
         }

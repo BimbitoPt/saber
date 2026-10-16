@@ -135,39 +135,39 @@ function teamSetup(source: string, root: string, spawnImpl?: (opts: unknown) => 
 }
 
 describe("specialist team launch", { timeout: 30000 }, () => {
-  it("validates selection size, implementer rule, and role state", () => {
+  it("validates selection size, implementer rule, and role state", async () => {
     const { root, source } = makeRepo();
     const { task, teams } = teamSetup(source, root);
-    expect(() => teams.planTeam(task.id, [])).toThrow("at least one");
-    expect(() => teams.planTeam(task.id, [
+    await expect(teams.planTeam(task.id, [])).rejects.toThrow("at least one");
+    await expect(teams.planTeam(task.id, [
       { role: "implementer", provider: "opencode" }, { role: "reviewer", provider: "claude" },
       { role: "implementer", provider: "codex" }, { role: "reviewer", provider: "claude" },
       { role: "implementer", provider: "opencode" },
-    ])).toThrow("at most 4");
-    expect(() => teams.planTeam(task.id, [{ role: "reviewer", provider: "claude" }])).not.toThrow();
-    expect(() => teams.planTeam(task.id, [{ role: "implementer", provider: "opencode" }])).not.toThrow();
+    ])).rejects.toThrow("at most 4");
+    await expect(teams.planTeam(task.id, [{ role: "reviewer", provider: "claude" }])).resolves.not.toThrow();
+    await expect(teams.planTeam(task.id, [{ role: "implementer", provider: "opencode" }])).resolves.not.toThrow();
     teams.updateRole(source, "implementer", { enabled: false });
-    expect(() => teams.planTeam(task.id, [{ role: "implementer", provider: "opencode" }])).toThrow("disabled");
-    expect(() => teams.planTeam(task.id, [{ role: "ghost", provider: "opencode" }])).toThrow("Role not found");
-    expect(() => teams.planTeam(task.id, [{ role: "reviewer", provider: "sms" }])).toThrow("Unknown provider");
-    expect(() => teams.planTeam("missing-task", [{ role: "reviewer", provider: "claude" }])).toThrow("Task not found");
+    await expect(teams.planTeam(task.id, [{ role: "implementer", provider: "opencode" }])).rejects.toThrow("disabled");
+    await expect(teams.planTeam(task.id, [{ role: "ghost", provider: "opencode" }])).rejects.toThrow("Role not found");
+    await expect(teams.planTeam(task.id, [{ role: "reviewer", provider: "sms" }])).rejects.toThrow("Unknown provider");
+    await expect(teams.planTeam("missing-task", [{ role: "reviewer", provider: "claude" }])).rejects.toThrow("Task not found");
   });
 
-  it("requires the implementer when any member edits and honors read-only support", () => {
+  it("requires the implementer when any member edits and honors read-only support", async () => {
     const { root, source } = makeRepo();
     const { task, teams, store } = teamSetup(source, root);
     teams.createRole(source, { id: "writer", displayName: "Writer", instructions: "Write.", write: true, providers: ["opencode"] });
-    expect(() => teams.planTeam(task.id, [{ role: "writer", provider: "opencode" }])).toThrow("implementer");
-    expect(() => teams.planTeam(task.id, [
+    await expect(teams.planTeam(task.id, [{ role: "writer", provider: "opencode" }])).rejects.toThrow("implementer");
+    await expect(teams.planTeam(task.id, [
       { role: "writer", provider: "opencode" }, { role: "implementer", provider: "opencode" },
-    ])).not.toThrow();
+    ])).resolves.not.toThrow();
     const realTeams = new SpecialistTeams(store);
     teams.createRole(source, { id: "observer", displayName: "Observer", instructions: "Observe.", write: false, providers: ["opencode", "claude"] });
-    expect(() => realTeams.planTeam(task.id, [{ role: "observer", provider: "opencode" }])).toThrow("cannot review");
-    expect(realTeams.planTeam(task.id, [{ role: "observer", provider: "claude" }]).members[0].readOnly).toBe(true);
+    await expect(realTeams.planTeam(task.id, [{ role: "observer", provider: "opencode" }])).rejects.toThrow("cannot review");
+    expect((await realTeams.planTeam(task.id, [{ role: "observer", provider: "claude" }])).members[0].readOnly).toBe(true);
   });
 
-  it("refuses non-Git projects and busy workspaces", () => {
+  it("refuses non-Git projects and busy workspaces", async () => {
     const { root, source } = makeRepo();
     const plain = mkdtempSync(join(tmpdir(), "saber-team-plain-"));
     directories.push(plain);
@@ -175,10 +175,10 @@ describe("specialist team launch", { timeout: 30000 }, () => {
     const other = store.createTask({ project: plain, title: "Plain", spec: "x", criteria: "y" });
     profiles.registerProject(plain);
     profiles.approveRevision(profiles.saveDraft(plain, [{ key: "note", origin: "user", author: "test", content: "plain project" }]).id);
-    expect(() => teams.planTeam(other.id, [{ role: "reviewer", provider: "claude" }])).toThrow("Git");
+    await expect(teams.planTeam(other.id, [{ role: "reviewer", provider: "claude" }])).rejects.toThrow("Git");
     const task = store.listTasks().find((t) => t.project === source)!;
     store.createRun(task.id, "blocking prompt");
-    expect(() => teams.planTeam(task.id, [{ role: "reviewer", provider: "claude" }])).toThrow("already using");
+    await expect(teams.planTeam(task.id, [{ role: "reviewer", provider: "claude" }])).rejects.toThrow("already using");
     store.finishRun(store.listRuns(task.id)[0].id, "done", 0);
     const locked = new TerminalLocks();
     locked.reserve(store, other.id, source);
@@ -186,7 +186,7 @@ describe("specialist team launch", { timeout: 30000 }, () => {
       name: "claude", contextBudget: { maxPromptChars: 200_000, supportsProfileContext: true },
       readOnly: { supported: true, args: [] }, args: () => [], spawn: () => { throw new Error("no spawn"); },
     }), locked);
-    expect(() => blocked.planTeam(task.id, [{ role: "reviewer", provider: "claude" }])).toThrow("interactive terminal");
+    await expect(blocked.planTeam(task.id, [{ role: "reviewer", provider: "claude" }])).rejects.toThrow("interactive terminal");
   });
 
   it("launches members in distinct worktrees with captured roles", async () => {
@@ -273,7 +273,7 @@ describe("specialist team launch", { timeout: 30000 }, () => {
     ];
     await teams.launchTeam(task.id, members);
     await expect(teams.launchTeam(task.id, [{ role: "reviewer", provider: "claude" }])).rejects.toThrow("already active");
-    expect(() => teams.planTeam(task.id, [{ role: "reviewer", provider: "claude" }])).toThrow("already active");
+    await expect(teams.planTeam(task.id, [{ role: "reviewer", provider: "claude" }])).rejects.toThrow("already active");
     for (const team of store.listTeams(task.id)) {
       for (const member of team.members) store.finishRun(member.runId, "done", 0);
     }

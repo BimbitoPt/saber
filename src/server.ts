@@ -140,18 +140,18 @@ async function handleApi(request: Request): Promise<Response | null> {
   const workspaceMatch = /^\/api\/tasks\/([^/]+)\/workspace(\/merge)?$/.exec(path);
   if (workspaceMatch) {
     try {
-      const service = new GitWorkspaceService(getTaskStore(), (directory) => getAgentRuns().hasActiveWorkspace(directory));
+      const service = new GitWorkspaceService(getTaskStore(), (directory) => getAgentRuns().hasActiveWorkspace(directory), undefined, request.signal);
       const id = workspaceMatch[1];
       if (!getTaskStore().getTask(id)) return jsonResponse({ error: "Task not found" }, 404);
       if (workspaceMatch[2] && request.method === "POST") {
         const body = await request.json() as { head?: unknown };
         if (!body || typeof body.head !== "string") return jsonResponse({ error: "A reviewed commit is required" }, 400);
-        return jsonResponse(service.merge(id, body.head));
+        return jsonResponse(await service.merge(id, body.head));
       }
       if (!workspaceMatch[2]) {
-        if (request.method === "GET") return jsonResponse(service.review(id));
-        if (request.method === "POST") return jsonResponse(service.create(id));
-        if (request.method === "DELETE") return jsonResponse(service.remove(id));
+        if (request.method === "GET") return jsonResponse(await service.review(id));
+        if (request.method === "POST") return jsonResponse(await service.create(id));
+        if (request.method === "DELETE") return jsonResponse(await service.remove(id));
       }
       return jsonResponse({ error: "Method not allowed" }, 405);
     } catch (error) { return errorResponse(error, 409); }
@@ -164,7 +164,7 @@ async function handleApi(request: Request): Promise<Response | null> {
     if (request.method === "GET") return jsonResponse(store.listTerminalSessions(task.id));
     if (request.method === "POST") {
       try {
-        const workdir = taskWorkdir(task);
+        const workdir = await taskWorkdir(task, request.signal);
         const lock = getTerminalLocks().reserve(store, task.id, workdir);
         return jsonResponse(lock, 201);
       } catch (error) { return errorResponse(error, 409); }
@@ -230,7 +230,7 @@ async function handleApi(request: Request): Promise<Response | null> {
       const provider = (body.provider ?? "opencode") as ProviderId;
       if (!["opencode", "codex", "claude"].includes(provider)) return jsonResponse({ error: "Invalid provider" }, 400);
       if (!getTaskStore().getTask(taskRunsPreview[1])) return jsonResponse({ error: "Task not found" }, 404);
-      const preview: ScopePreview = getAgentRuns().preview(taskRunsPreview[1], provider);
+      const preview: ScopePreview = await getAgentRuns().preview(taskRunsPreview[1], provider, request.signal);
       return jsonResponse(preview);
     } catch (error) { return errorResponse(error, 400); }
   }
@@ -240,16 +240,16 @@ async function handleApi(request: Request): Promise<Response | null> {
   const runReviewMatch = /^\/api\/tasks\/([^/]+)\/runs\/([^/]+)\/(review|merge)$/.exec(path);
   if (runReviewMatch && runReviewMatch[3] === "review" && request.method === "GET") {
     try {
-      const service = new GitWorkspaceService(getTaskStore(), (directory) => getAgentRuns().hasActiveWorkspace(directory));
-      return jsonResponse(service.reviewRunWorktree(runReviewMatch[1], runReviewMatch[2]));
+      const service = new GitWorkspaceService(getTaskStore(), (directory) => getAgentRuns().hasActiveWorkspace(directory), undefined, request.signal);
+      return jsonResponse(await service.reviewRunWorktree(runReviewMatch[1], runReviewMatch[2]));
     } catch (error) { return profileError(error); }
   }
   if (runReviewMatch && runReviewMatch[3] === "merge" && request.method === "POST") {
     try {
       const body = await request.json() as { head?: unknown };
       if (!body || typeof body.head !== "string") return jsonResponse({ error: "A reviewed commit is required" }, 400);
-      const service = new GitWorkspaceService(getTaskStore(), (directory) => getAgentRuns().hasActiveWorkspace(directory));
-      return jsonResponse(service.mergeRunWorktree(runReviewMatch[1], runReviewMatch[2], body.head));
+      const service = new GitWorkspaceService(getTaskStore(), (directory) => getAgentRuns().hasActiveWorkspace(directory), undefined, request.signal);
+      return jsonResponse(await service.mergeRunWorktree(runReviewMatch[1], runReviewMatch[2], body.head));
     } catch (error) { return profileError(error); }
   }
   if (taskRuns && request.method === "POST") {
@@ -263,7 +263,7 @@ async function handleApi(request: Request): Promise<Response | null> {
       const provider = (body.provider ?? "opencode") as ProviderId;
       const readiness = await providerStatus(provider);
       if (!readiness.installed || readiness.auth === "signed-out") return jsonResponse({ error: readiness.message }, 409);
-      const id = await getAgentRuns().start(taskRuns[1], { provider, model: body.model as string | undefined, followup: body.followup as string | undefined });
+      const id = await getAgentRuns().start(taskRuns[1], { provider, model: body.model as string | undefined, followup: body.followup as string | undefined }, request.signal);
       return jsonResponse({ id }, 201);
     } catch (error) { return errorResponse(error, 409); }
   }
@@ -297,7 +297,7 @@ async function handleApi(request: Request): Promise<Response | null> {
     }
     try {
       const record = getTaskStore().createTask({ project: resolveWorkdir(project), title: task.slice(0, 120), spec: task, criteria: "Report the changes and verification results." });
-      const id = await getAgentRuns().start(record.id, { model });
+      const id = await getAgentRuns().start(record.id, { model }, request.signal);
       return jsonResponse({ id }, 201);
     } catch (error) {
       console.error(describeError(error));
@@ -334,7 +334,7 @@ async function handleApi(request: Request): Promise<Response | null> {
       if (!run) return jsonResponse({ error: "not found" }, 404);
       const readiness = await providerStatus(run.provider);
       if (!readiness.installed || readiness.auth === "signed-out") return jsonResponse({ error: readiness.message }, 409);
-      const id = await getAgentRuns().start(run.taskId, { provider: run.provider, followup: body.task });
+      const id = await getAgentRuns().start(run.taskId, { provider: run.provider, followup: body.task }, request.signal);
       return jsonResponse({ id }, 201);
     } catch (error) {
       return errorResponse(error, 500);
@@ -467,7 +467,7 @@ async function handleApi(request: Request): Promise<Response | null> {
     try {
       const body = await request.json() as { members?: unknown };
       if (!body || !Array.isArray(body.members)) return jsonResponse({ error: "Team members are required" }, 400);
-      return jsonResponse(getSpecialistTeams().planTeam(teamMatch[1], body.members));
+      return jsonResponse(await getSpecialistTeams().planTeam(teamMatch[1], body.members));
     } catch (error) { return profileError(error); }
   }
   if (teamMatch && !teamMatch[2] && request.method === "POST") {
@@ -475,7 +475,7 @@ async function handleApi(request: Request): Promise<Response | null> {
       const body = await request.json() as { members?: unknown };
       if (!body || !Array.isArray(body.members)) return jsonResponse({ error: "Team members are required" }, 400);
       const planner = getSpecialistTeams();
-      const plan = planner.planTeam(teamMatch[1], body.members);
+      const plan = await planner.planTeam(teamMatch[1], body.members);
       for (const member of plan.members) {
         const readiness = await providerStatus(member.provider);
         if (!readiness.installed || readiness.auth === "signed-out") return jsonResponse({ error: readiness.message }, 409);
