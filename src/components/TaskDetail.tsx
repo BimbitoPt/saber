@@ -14,6 +14,8 @@ const fields = (task: TaskRecord) => ({ title: task.title, spec: task.spec, crit
 export function TaskDetail({ task, onSaved }: { task: TaskRecord; onSaved: (task: TaskRecord) => void }) {
   const [form, setForm] = useState(() => fields(task));
   const [saved, setSaved] = useState(() => fields(task));
+  const [base, setBase] = useState(() => ({ revision: task.revision, updatedAt: task.updatedAt }));
+  const [conflict, setConflict] = useState(false);
   const [runs, setRuns] = useState<RunRecord[]>([]);
   const [runId, setRunId] = useState<string | null>(null);
   const [model, setModel] = useState("");
@@ -61,8 +63,28 @@ export function TaskDetail({ task, onSaved }: { task: TaskRecord; onSaved: (task
   useEffect(() => {
     try {
       const recovery = JSON.parse(localStorage.getItem(storageKey) ?? "null");
-      if (recovery && Object.keys(fields(task)).every((key) => typeof recovery[key] === "string")) setForm(recovery);
+      const recovered = recovery?.fields ?? recovery;
+      const complete = recovered && Object.keys(fields(task)).every((key) => typeof recovered[key] === "string");
+      const sameBase = recovery?.baseRevision === task.revision && recovery?.baseUpdatedAt === task.updatedAt;
+      if (complete && sameBase) setForm(recovered);
+      else if (complete) localStorage.removeItem(storageKey);
     } catch {}
+  }, [storageKey, task.revision, task.updatedAt]);
+
+  useEffect(() => {
+    if (task.revision === base.revision && task.updatedAt === base.updatedAt) return;
+    if (dirty) {
+      setConflict(true);
+      return;
+    }
+    const next = fields(task);
+    setForm(next);
+    setSaved(next);
+    setBase({ revision: task.revision, updatedAt: task.updatedAt });
+    setConflict(false);
+  }, [task, dirty, base.revision, base.updatedAt]);
+
+  useEffect(() => {
     let cancelled = false;
     const refresh = () => listTaskRuns(task.id).then((items) => {
       if (!cancelled) { setRuns(items); setRunId((old) => old ?? items[0]?.id ?? null); }
@@ -70,18 +92,29 @@ export function TaskDetail({ task, onSaved }: { task: TaskRecord; onSaved: (task
     void refresh();
     const timer = setInterval(refresh, 1500);
     return () => { cancelled = true; clearInterval(timer); };
-  }, [task.id, storageKey]);
+  }, [task.id]);
 
   function edit(key: keyof typeof form, value: string) {
     const next = { ...form, [key]: value };
     setForm(next); setMessage("");
-    try { localStorage.setItem(storageKey, JSON.stringify(next)); }
+    try { localStorage.setItem(storageKey, JSON.stringify({ fields: next, baseRevision: base.revision, baseUpdatedAt: base.updatedAt })); }
     catch { setError("Local recovery is unavailable. Save changes before switching tasks."); }
   }
 
+  function reloadFromServer() {
+    const next = fields(task);
+    setForm(next); setSaved(next);
+    setBase({ revision: task.revision, updatedAt: task.updatedAt });
+    setConflict(false); setMessage("");
+    try { localStorage.removeItem(storageKey); } catch {}
+  }
+
   async function save() {
-    const result = await saveTask(task.id, form);
-    setSaved(fields(result)); onSaved(result);
+    const result = await saveTask(task.id, { ...form, expectedRevision: base.revision, expectedUpdatedAt: base.updatedAt });
+    setSaved(fields(result));
+    setBase({ revision: result.revision, updatedAt: result.updatedAt });
+    setConflict(false);
+    onSaved(result);
     try { localStorage.removeItem(storageKey); } catch {}
     return result;
   }
@@ -116,6 +149,10 @@ export function TaskDetail({ task, onSaved }: { task: TaskRecord; onSaved: (task
     </div>
     {error && <p role="alert" className="text-sm text-err">{error}</p>}
     {message && <p role="status" className="text-xs text-muted">{message}</p>}
+    {conflict && <div role="alert" className="flex flex-wrap items-center gap-2 rounded border border-line p-2 text-xs text-err">
+      This task changed on the server. Your unsaved edits were kept, but saving them would overwrite newer state.
+      <button onClick={reloadFromServer} className="rounded border border-line px-2 py-1 text-xs">Discard local changes and reload</button>
+    </div>}
     {dirty && <p className="text-xs text-muted">Unsaved edits restored locally. Save to update the task.</p>}
     <WorkspacePanel task={task} locked={busy || active || interrupted.length > 0} onSaved={onSaved} onBusyChange={setWorkspaceBusy} />
     <ProjectProfilePanel projectRoot={task.project} />

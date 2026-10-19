@@ -6,6 +6,18 @@ import type { TaskInput, TaskPatch, TaskRecord, TaskSummary, RunRecord, RunStatu
 import { canonicalizeProjectRoot, workspacesOverlap } from "./workspaceIdentity";
 import { summarizeVerification } from "../lib/verification";
 
+export class StaleTaskError extends Error {
+  constructor(
+    readonly currentRevision: number,
+    readonly currentUpdatedAt: number,
+    readonly expectedRevision: number | undefined,
+    readonly expectedUpdatedAt: number | undefined,
+  ) {
+    super(`This task changed after the form was loaded (server revision ${currentRevision}, form revision ${expectedRevision ?? "unknown"}). Reload and reapply your changes.`);
+    this.name = "StaleTaskError";
+  }
+}
+
 export class TaskStore {
   private db: DatabaseSync;
 
@@ -94,15 +106,20 @@ export class TaskStore {
   updateTask(id: string, patch: TaskPatch): TaskRecord {
     const task = this.getTask(id);
     if (!task) throw new Error("Task not found");
-    for (const key of Object.keys(patch)) {
+    const { expectedRevision, expectedUpdatedAt, ...fields } = patch;
+    if ((expectedRevision !== undefined && expectedRevision !== task.revision)
+      || (expectedUpdatedAt !== undefined && expectedUpdatedAt !== task.updatedAt)) {
+      throw new StaleTaskError(task.revision, task.updatedAt, expectedRevision, expectedUpdatedAt);
+    }
+    for (const key of Object.keys(fields)) {
       if (!["title", "spec", "criteria", "context", "draft"].includes(key)) throw new Error(`Unknown field: ${key}`);
-      const value = patch[key as keyof TaskPatch];
+      const value = fields[key as keyof typeof fields];
       if (typeof value !== "string" || value.length > 100_000) throw new Error(`Invalid ${key}`);
       if (["title", "spec", "criteria"].includes(key) && !value.trim()) throw new Error(`${key} is required`);
     }
-    const changed = (patch.spec !== undefined && patch.spec !== task.spec)
-      || (patch.criteria !== undefined && patch.criteria !== task.criteria);
-    const updated = { ...task, ...patch, revision: task.revision + Number(changed), updatedAt: Date.now() };
+    const changed = (fields.spec !== undefined && fields.spec !== task.spec)
+      || (fields.criteria !== undefined && fields.criteria !== task.criteria);
+    const updated = { ...task, ...fields, revision: task.revision + Number(changed), updatedAt: Date.now() };
     this.db.prepare("UPDATE tasks SET data = ? WHERE id = ?").run(JSON.stringify(updated), id);
     return updated;
   }
@@ -174,7 +191,8 @@ export class TaskStore {
       interrupted: ["running", "stopped"],
       stopped: [],
     };
-    if (record.status !== status && !allowed[record.status].includes(status)) throw new Error(`Cannot change terminal session from ${record.status} to ${status}`);
+    if (record.status === status) return record;
+    if (!allowed[record.status].includes(status)) throw new Error(`Cannot change terminal session from ${record.status} to ${status}`);
     const now = Date.now();
     const updated: TerminalSessionRecord = {
       ...record,
@@ -182,15 +200,22 @@ export class TaskStore {
       ...(status === "running" && !record.startedAt ? { startedAt: now } : {}),
       ...(status === "stopped" ? { endedAt: now } : {}),
     };
-    this.db.prepare("UPDATE terminal_sessions SET data = ? WHERE id = ?").run(JSON.stringify(updated), id);
-    return updated;
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      this.db.prepare("UPDATE terminal_sessions SET data = ? WHERE id = ?").run(JSON.stringify(updated), id);
+      this.db.exec("COMMIT");
+      return updated;
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   reconcileTerminalSessions(liveSessionIds: string[]) {
     const live = new Set(liveSessionIds);
     return this.listTerminalSessions().map((record) => {
       if (record.status === "stopped") return record;
-      if (live.has(record.id)) return this.setTerminalSessionStatus(record.id, "running");
+      if (live.has(record.id)) return record.status === "running" ? record : this.setTerminalSessionStatus(record.id, "running");
       if (record.status === "interrupted") return record;
       return this.setTerminalSessionStatus(record.id, "interrupted");
     });
@@ -447,7 +472,19 @@ export class TaskStore {
 
   finishRun(id: string, status: RunStatus, exitCode: number | null) {
     const run = this.getRun(id);
-    if (run) this.writeRun({ ...run, status, exitCode, endedAt: Date.now() });
+    if (!run) return undefined;
+    const allowed: Record<RunStatus, RunStatus[]> = {
+      running: ["done", "stopped", "error", "interrupted"],
+      interrupted: ["stopped"],
+      done: [],
+      stopped: [],
+      error: [],
+    };
+    if (run.status === status) return run;
+    if (!allowed[run.status].includes(status)) throw new Error(`Cannot change run from ${run.status} to ${status}`);
+    const updated = { ...run, status, exitCode, endedAt: Date.now() };
+    this.writeRun(updated);
+    return updated;
   }
 
   appendEvent(id: string, line: string) {

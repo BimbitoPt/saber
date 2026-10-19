@@ -115,15 +115,30 @@ export class AgentRuns {
         this.store.appendEvent(run.id, JSON.stringify({ type: "provider_error", message: data.toString().slice(0, 16000) }));
       });
       child.on("error", (error) => {
+        if (!this.active.has(run.id)) return;
+        this.active.delete(run.id);
         this.store.appendEvent(run.id, JSON.stringify({ type: "provider_error", message: error.message }));
-        this.store.finishRun(run.id, "error", null);
+        try {
+          this.store.finishRun(run.id, "error", null);
+        } catch {
+          // A close event may have already settled the run; the terminal state stands.
+        } finally {
+          this.stopping.delete(run.id);
+        }
       });
       child.on("close", (code) => {
+        if (!this.active.has(run.id)) return;
         append(pending + decoder.end());
         pending = "";
         this.active.delete(run.id);
         const current = this.store.getRun(run.id);
-        if (current?.status === "running") this.store.finishRun(run.id, this.stopping.has(run.id) ? "stopped" : code === 0 && !providerFailed ? "done" : "error", code);
+        if (current?.status === "running") {
+          try {
+            this.store.finishRun(run.id, this.stopping.has(run.id) ? "stopped" : code === 0 && !providerFailed ? "done" : "error", code);
+          } catch {
+            // A concurrent error event may have already settled the run; the terminal state stands.
+          }
+        }
         this.stopping.delete(run.id);
       });
     } catch (error) {
@@ -213,8 +228,11 @@ export class AgentRuns {
   }
 
   async stop(id: string) {
+    const run = this.store.getRun(id);
+    if (!run) throw new Error("Run not found");
+    if (run.status !== "running" && run.status !== "interrupted") return;
     const child = this.active.get(id);
-    if (!child) throw new Error("No owned process is available to stop");
+    if (!child) return;
     this.stopping.add(id);
     try {
       if (process.platform === "win32" && child.pid) {

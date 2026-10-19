@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { TaskStore } from "./taskStore";
+import { TaskStore, StaleTaskError } from "./taskStore";
 
 const directories: string[] = [];
 const stores: TaskStore[] = [];
@@ -80,6 +80,23 @@ describe("persistent tasks", () => {
     expect(() => store.updateTask(task.id, { spec: "" })).toThrow("spec is required");
     expect(() => store.updateTask(task.id, { revision: 44 } as never)).toThrow("Unknown field");
     expect(store.getTask(task.id)?.revision).toBe(1);
+  });
+
+  it("rejects a stale task form and preserves the newer revision", () => {
+    const { store } = setup();
+    const task = store.createTask(input);
+    const staleRevision = task.revision;
+    store.updateTask(task.id, { spec: "Newer specification" });
+    const newer = store.getTask(task.id)!;
+    expect(newer.revision).toBe(staleRevision + 1);
+
+    expect(() => store.updateTask(task.id, { spec: "Older form text", expectedRevision: staleRevision })).toThrow(StaleTaskError);
+    expect(() => store.updateTask(task.id, { title: "Older title", expectedUpdatedAt: newer.updatedAt - 1 })).toThrow("changed after the form was loaded");
+    expect(store.getTask(task.id)?.spec).toBe("Newer specification");
+    expect(store.getTask(task.id)?.title).toBe("Fix navigation");
+
+    const accepted = store.updateTask(task.id, { title: "Fresh title", expectedRevision: newer.revision, expectedUpdatedAt: newer.updatedAt });
+    expect(accepted.title).toBe("Fresh title");
   });
 
   it("blocks root and sibling directories belonging to the same checkout", () => {

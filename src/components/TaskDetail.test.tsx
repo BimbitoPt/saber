@@ -154,4 +154,35 @@ describe("TaskDetail outgoing context preview", () => {
     await renderDetail();
     expect(document.body.textContent).toContain("No profile context");
   });
+
+  it("sends the rendered revision so a stale form cannot overwrite newer state", async () => {
+    await renderDetail();
+    const titleInput = [...document.querySelectorAll("input")].find((element) => element.value === "Demo");
+    if (!(titleInput instanceof HTMLInputElement)) throw new Error("Title input is missing");
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      setter.call(titleInput, "Renamed");
+      titleInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await flush();
+    await clickButton("Save changes");
+    expect(mocks.saveTask).toHaveBeenCalledWith("task-1", expect.objectContaining({
+      title: "Renamed", expectedRevision: 1, expectedUpdatedAt: 1,
+    }));
+  });
+
+  it("surfaces a stale-form rejection instead of silently overwriting", async () => {
+    mocks.saveTask.mockRejectedValueOnce(new Error("This task changed after the form was loaded (server revision 2, form revision 1). Reload and reapply your changes."));
+    await renderDetail();
+    const titleInput = [...document.querySelectorAll("input")].find((element) => element.value === "Demo");
+    if (!(titleInput instanceof HTMLInputElement)) throw new Error("Title input is missing");
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      setter.call(titleInput, "Renamed");
+      titleInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await flush();
+    await clickButton("Save changes");
+    expect(document.body.textContent).toContain("changed after the form was loaded");
+  });
 });

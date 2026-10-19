@@ -82,7 +82,10 @@ export interface VerificationSummary {
 }
 
 export type TaskInput = Pick<TaskRecord, "project" | "title" | "spec" | "criteria">;
-export type TaskPatch = Partial<Pick<TaskRecord, "title" | "spec" | "criteria" | "context" | "draft">>;
+export type TaskPatch = Partial<Pick<TaskRecord, "title" | "spec" | "criteria" | "context" | "draft">> & {
+  expectedRevision?: number;
+  expectedUpdatedAt?: number;
+};
 
 export interface RunRecord {
   id: string;
