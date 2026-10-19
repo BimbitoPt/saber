@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { TaskStore, StaleTaskError } from "./taskStore";
+import { TaskStore, StaleTaskError, MissingPreconditionError, validateTaskPreconditions } from "./taskStore";
+import type { TaskPatch } from "../lib/tasks";
 
 const directories: string[] = [];
 const stores: TaskStore[] = [];
@@ -183,5 +184,30 @@ describe("persistent tasks", () => {
     store.createTerminalSession({ id: "terminal-live", taskId: task.id, workdir: task.project, status: "starting", createdAt: 11 });
     expect(store.reconcileTerminalSessions(["terminal-live"])[0].status).toBe("running");
     expect(store.reconcileTerminalSessions([])[0].status).toBe("interrupted");
+  });
+
+  it("requires a usable form token and keeps every write strictly newer", () => {
+    const { store } = setup();
+    const task = store.createTask(input);
+    expect(() => validateTaskPreconditions({ title: "No token" } as TaskPatch)).toThrow(MissingPreconditionError);
+    expect(() => validateTaskPreconditions({ title: "Bad token", expectedUpdatedAt: "1" } as never)).toThrow(MissingPreconditionError);
+    expect(() => validateTaskPreconditions({ title: "Bad token", expectedUpdatedAt: Number.NaN })).toThrow(MissingPreconditionError);
+    expect(() => validateTaskPreconditions({ title: "Bad revision", expectedUpdatedAt: task.updatedAt, expectedRevision: "1" } as never)).toThrow("expectedRevision must be a number");
+    validateTaskPreconditions({ title: "Good", expectedUpdatedAt: task.updatedAt, expectedRevision: task.revision });
+
+    const first = store.updateTask(task.id, { context: "one", expectedUpdatedAt: task.updatedAt });
+    const second = store.updateTask(task.id, { context: "two", expectedUpdatedAt: first.updatedAt });
+    expect(second.updatedAt).toBeGreaterThan(first.updatedAt);
+    expect(() => store.updateTask(task.id, { context: "stale", expectedUpdatedAt: first.updatedAt })).toThrow(StaleTaskError);
+    expect(store.getTask(task.id)?.context).toBe("two");
+  });
+
+  it("never resurrects an interrupted terminal session during reconciliation", () => {
+    const { store } = setup();
+    const task = store.createTask(input);
+    store.createTerminalSession({ id: "terminal-dead", taskId: task.id, workdir: task.project, status: "running", createdAt: 14 });
+    expect(store.reconcileTerminalSessions([])[0].status).toBe("interrupted");
+    expect(store.reconcileTerminalSessions(["terminal-dead"])[0].status).toBe("interrupted");
+    expect(() => store.setTerminalSessionStatus("terminal-dead", "running")).toThrow("Cannot change terminal session");
   });
 });

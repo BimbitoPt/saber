@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { acknowledgeRun, launchTask, listTaskRuns, previewTaskScope, saveTask, stopSession, listProviders } from "../lib/api";
 import { runStatusLabel, providerLabels, type ProviderId, type ProviderStatus, type ScopePreview, type TaskRecord, type RunRecord } from "../lib/tasks";
 import { SessionPane } from "./SessionPane";
@@ -16,6 +16,8 @@ export function TaskDetail({ task, onSaved }: { task: TaskRecord; onSaved: (task
   const [saved, setSaved] = useState(() => fields(task));
   const [base, setBase] = useState(() => ({ revision: task.revision, updatedAt: task.updatedAt }));
   const [conflict, setConflict] = useState(false);
+  const taskRef = useRef(task);
+  taskRef.current = task;
   const [runs, setRuns] = useState<RunRecord[]>([]);
   const [runId, setRunId] = useState<string | null>(null);
   const [model, setModel] = useState("");
@@ -61,15 +63,18 @@ export function TaskDetail({ task, onSaved }: { task: TaskRecord; onSaved: (task
   }, [task.id]);
 
   useEffect(() => {
+    // Read the draft once per task, against the task as it is when that task is opened. Later
+    // server bumps must not delete a draft the user is still editing.
+    const current = taskRef.current;
     try {
       const recovery = JSON.parse(localStorage.getItem(storageKey) ?? "null");
       const recovered = recovery?.fields ?? recovery;
-      const complete = recovered && Object.keys(fields(task)).every((key) => typeof recovered[key] === "string");
-      const sameBase = recovery?.baseRevision === task.revision && recovery?.baseUpdatedAt === task.updatedAt;
+      const complete = recovered && Object.keys(fields(current)).every((key) => typeof recovered[key] === "string");
+      const sameBase = recovery?.baseRevision === current.revision && recovery?.baseUpdatedAt === current.updatedAt;
       if (complete && sameBase) setForm(recovered);
       else if (complete) localStorage.removeItem(storageKey);
     } catch {}
-  }, [storageKey, task.revision, task.updatedAt]);
+  }, [storageKey]);
 
   useEffect(() => {
     if (task.revision === base.revision && task.updatedAt === base.updatedAt) return;
@@ -105,7 +110,7 @@ export function TaskDetail({ task, onSaved }: { task: TaskRecord; onSaved: (task
     const next = fields(task);
     setForm(next); setSaved(next);
     setBase({ revision: task.revision, updatedAt: task.updatedAt });
-    setConflict(false); setMessage("");
+    setConflict(false); setMessage(""); setError("");
     try { localStorage.removeItem(storageKey); } catch {}
   }
 
@@ -174,8 +179,8 @@ export function TaskDetail({ task, onSaved }: { task: TaskRecord; onSaved: (task
           try { localStorage.setItem(`saber.provider.${task.id}`, next); } catch {}
         }} className={inputClass}>{Object.entries(providerLabels).map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>
         <label className="min-w-40 flex-1 text-xs text-muted">Model (optional)<input value={model} onChange={(e) => setModel(e.target.value)} placeholder={`${providerLabels[provider]} default`} className={inputClass} /></label>
-        <button disabled={unavailable || workspaceUnavailable || active || interrupted.length > 0} onClick={() => void action(() => launch())} className="rounded bg-accent px-3 py-2 text-sm font-semibold text-black disabled:opacity-40">{latest ? "New run" : "Run specification"}</button>
-        {runs.some((run) => run.provider === provider && run.nativeSessionId && run.project === executionPath) && <button disabled={unavailable || workspaceUnavailable || active || interrupted.length > 0 || !form.draft.trim()} onClick={() => void action(() => launch(true))} className="rounded border border-line px-3 py-2 text-sm disabled:opacity-40">Send follow-up</button>}
+        <button disabled={unavailable || workspaceUnavailable || active || interrupted.length > 0 || conflict} onClick={() => void action(() => launch())} className="rounded bg-accent px-3 py-2 text-sm font-semibold text-black disabled:opacity-40">{latest ? "New run" : "Run specification"}</button>
+        {runs.some((run) => run.provider === provider && run.nativeSessionId && run.project === executionPath) && <button disabled={unavailable || workspaceUnavailable || active || interrupted.length > 0 || conflict || !form.draft.trim()} onClick={() => void action(() => launch(true))} className="rounded border border-line px-3 py-2 text-sm disabled:opacity-40">Send follow-up</button>}
         {active && <button onClick={() => void action(async () => { await stopSession(runs.find((run) => run.status === "running")!.id); setRuns(await listTaskRuns(task.id)); })} className="rounded border border-line px-3 py-2 text-sm">Stop run</button>}
       </div>
       <div className="flex flex-wrap items-center gap-2 text-xs text-muted"><span>{checking ? "Checking providers..." : readiness?.message ?? "Provider status unavailable."}</span><button disabled={checking} onClick={() => void refreshProviders()} className="underline disabled:opacity-40">Refresh providers</button>{capability && <span aria-label="Provider context capability">· {capability}</span>}</div>

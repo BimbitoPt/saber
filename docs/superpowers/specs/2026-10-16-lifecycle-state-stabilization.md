@@ -29,11 +29,11 @@ Excluded: provider protocol changes, Git worktree semantics, profile revisions, 
 
 ## Data and lifecycle
 
-Task: `revision` increments only when spec or criteria change; `updatedAt` moves on every write. `updateTask` requires `expectedRevision` matching the stored revision.
+Task: `revision` increments only when spec or criteria change and is the spec binding for runs and verification. `updatedAt` is a strictly monotonic per-task clock that moves on every write (`Math.max(Date.now(), previous + 1)`), so it is the optimistic-concurrency token. The PATCH API requires `expectedUpdatedAt`; `expectedRevision` is optional but checked when present, and a miss is a 409 `stale_task`.
 
 Run: `running -> done | stopped | error | interrupted`. `interrupted -> stopped`. Terminal states (`done`, `stopped`, `error`) accept no further transition. `finishRun` enforces this table.
 
-Terminal session: `starting -> running | interrupted | stopped`. `running -> interrupted | stopped`. `interrupted -> running | stopped`. `stopped` is terminal. `setTerminalSessionStatus` already enforces this; `recoverTerminalSession` requires explicit confirmation.
+Terminal session: `starting -> running | interrupted | stopped`. `running -> interrupted | stopped`. `interrupted -> stopped`. `stopped` is terminal. `setTerminalSessionStatus` enforces this; `recoverTerminalSession` requires explicit confirmation, and reconciliation never promotes `interrupted` back to `running`.
 
 Task workspace: `provisioning -> ready`. `ready -> removed`. `removed` is terminal. Run worktree: `ready -> removed`. Both already enforced in `gitWorkspaces.ts`.
 
@@ -57,13 +57,13 @@ Concurrency rule: SQLite `BEGIN IMMEDIATE` serializes check-then-write for termi
 
 ## Completion evidence
 
-Date: 2026-10-19. Gates: `bun run test` 25 files / 162 passed / 1 skipped; `bunx tsc --noEmit` exit 0; `bun run build` exit 0.
+Date: 2026-10-19. Gates: `bun run test` 25 files / 166 passed / 1 skipped; `bunx tsc --noEmit` exit 0; `bun run build` exit 0.
 
-- LIFECYCLE-01 (legal transitions): implemented. `finishRun` enforces `running -> done|stopped|error|interrupted`, `interrupted -> stopped`, and rejects all other edges; `setTerminalSessionStatus` allows a same-state write as a no-op and rejects illegal edges. Covered by `taskStore.test.ts` and `terminalLocks.test.ts`.
-- LIFECYCLE-02 (process-exit cleanup): implemented for agent runs. `agentRuns.ts` guards `error` and `close` so the first terminal write wins and a duplicate event returns early after the process leaves the owned-process table. Dev-server, browser, and native-PTY exit cleanup remain open (see remaining work).
-- LIFECYCLE-03 (idempotent shutdown): implemented for runs and terminal sessions. `AgentRuns.stop` returns quietly for a missing process or an already-terminal run; `setTerminalSessionStatus` treats a repeat status as a no-op. Dev-server `stopDevServer` and browser `shutdown` idempotency remain open.
-- LIFECYCLE-04 (restart reconciliation): implemented. Store open marks persisted `running` runs `interrupted`; `reconcileTerminalSessions` leaves `interrupted` and `stopped` records alone and only promotes a live ID to `running`.
+- LIFECYCLE-01 (legal transitions): implemented. `finishRun` enforces `running -> done|stopped|error|interrupted`, `interrupted -> stopped`, and rejects all other edges; `setTerminalSessionStatus` allows a same-state write as a no-op and rejects illegal edges, including `interrupted -> running`. Covered by `taskStore.test.ts` and `terminalLocks.test.ts`.
+- LIFECYCLE-02 (process-exit cleanup): implemented for agent runs. `agentRuns.ts` guards `error` and `close` so the first terminal write wins and a duplicate event returns early after the process leaves the owned-process table; a failed output flush can no longer skip the terminal write, so a run cannot be stranded `running`. Dev-server, browser, and native-PTY exit cleanup remain open (see remaining work).
+- LIFECYCLE-03 (idempotent shutdown): implemented for runs and terminal sessions. `AgentRuns.stop` returns quietly for an already-terminal run, and a `running` run that owns no process is settled to `interrupted` instead of leaving the workspace falsely locked; `setTerminalSessionStatus` treats a repeat status as a no-op. Dev-server `stopDevServer` and browser `shutdown` idempotency remain open.
+- LIFECYCLE-04 (restart reconciliation): implemented. Store open marks persisted `running` runs `interrupted`; `reconcileTerminalSessions` leaves `stopped` and `interrupted` records alone, promotes only `starting` to `running`, and demotes anything not in the live list to `interrupted`. Covered by `taskStore.test.ts`.
 - LIFECYCLE-05 (atomic locks): implemented. Terminal reserve and run creation check and write inside one `BEGIN IMMEDIATE` transaction; a failed claim leaves no partial row.
-- LIFECYCLE-06 (stale-form protection): implemented. `updateTask` rejects a write whose `expectedRevision` or `expectedUpdatedAt` does not match the stored record via `StaleTaskError`; the PATCH route maps it to 409 `stale_task`. `TaskDetail` sends the revision and timestamp the form was rendered from, resyncs from the server when it has not diverged, keeps local edits and warns when it has, and a stale local draft is discarded rather than applied over newer server text. Covered by `taskStore.test.ts` and `TaskDetail.test.tsx`.
+- LIFECYCLE-06 (stale-form protection): implemented. `updateTask` rejects a write whose `expectedRevision` or `expectedUpdatedAt` does not match the stored record via `StaleTaskError`, and `updatedAt` is strictly monotonic so every write invalidates a form rendered from the previous state. The PATCH route requires `expectedUpdatedAt` (428 `precondition_required` when absent, 409 `stale_task` when stale) via `validateTaskPreconditions`. `TaskDetail` sends the revision and timestamp the form was rendered from, resyncs from the server when it has not diverged, keeps local edits and flags the conflict when it has (without deleting them), and discards a stale local draft only when the task is opened. Covered by `taskStore.test.ts` and `TaskDetail.test.tsx`.
 
-Remaining work in this spec, deferred to the process-lifecycle finding: dev-server and browser state tables, their exit handlers, their idempotent shutdown, and native-PTY session reaping on natural exit. `interventions: 0`.
+Remaining work in this spec, deferred to the process-lifecycle finding: dev-server and browser state tables, their exit handlers, their idempotent shutdown, and native-PTY session reaping on natural exit. Two adjacent items found in review are also deferred: releasing a terminal lock only after the PTY exit is confirmed (`TerminalSurface.tsx`), and rejecting cross-site mutating requests (`Origin`/`Sec-Fetch-Site` check on the local API). `interventions: 0`.

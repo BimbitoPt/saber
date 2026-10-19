@@ -304,4 +304,11 @@ describe("agent runs", () => {
     expect(run.onyxContextSha).toMatch(/^[0-9a-f]{64}$/);
     child.emit("close", 0);
   });
+  it("settles a running run that owns no process instead of leaving the workspace locked", async () => {
+    const { store, task, service } = setup();
+    const orphan = store.createRun(task.id, "prompt", undefined, "opencode");
+    await service.stop(orphan.id);
+    expect(store.getRun(orphan.id)?.status).toBe("interrupted");
+    expect(() => store.createRun(task.id, "another")).toThrow("interrupted");
+  });
 });

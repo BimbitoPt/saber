@@ -117,7 +117,7 @@ export class AgentRuns {
       child.on("error", (error) => {
         if (!this.active.has(run.id)) return;
         this.active.delete(run.id);
-        this.store.appendEvent(run.id, JSON.stringify({ type: "provider_error", message: error.message }));
+        try { this.store.appendEvent(run.id, JSON.stringify({ type: "provider_error", message: error.message })); } catch {}
         try {
           this.store.finishRun(run.id, "error", null);
         } catch {
@@ -128,18 +128,24 @@ export class AgentRuns {
       });
       child.on("close", (code) => {
         if (!this.active.has(run.id)) return;
-        append(pending + decoder.end());
-        pending = "";
         this.active.delete(run.id);
-        const current = this.store.getRun(run.id);
-        if (current?.status === "running") {
-          try {
-            this.store.finishRun(run.id, this.stopping.has(run.id) ? "stopped" : code === 0 && !providerFailed ? "done" : "error", code);
-          } catch {
-            // A concurrent error event may have already settled the run; the terminal state stands.
-          }
+        try {
+          append(pending + decoder.end());
+        } catch {
+          // A failed output flush must not stop the run from reaching a terminal state.
+        } finally {
+          pending = "";
         }
-        this.stopping.delete(run.id);
+        try {
+          const current = this.store.getRun(run.id);
+          if (current?.status === "running") {
+            this.store.finishRun(run.id, this.stopping.has(run.id) ? "stopped" : code === 0 && !providerFailed ? "done" : "error", code);
+          }
+        } catch {
+          // A concurrent error event may have already settled the run; the terminal state stands.
+        } finally {
+          this.stopping.delete(run.id);
+        }
       });
     } catch (error) {
       this.store.appendEvent(run.id, JSON.stringify({ type: "provider_error", message: String(error) }));
@@ -232,7 +238,13 @@ export class AgentRuns {
     if (!run) throw new Error("Run not found");
     if (run.status !== "running" && run.status !== "interrupted") return;
     const child = this.active.get(id);
-    if (!child) return;
+    if (!child) {
+      if (run.status === "running") {
+        // No process is owned for this run, so settle it instead of leaving the workspace falsely locked.
+        this.store.finishRun(id, "interrupted", null);
+      }
+      return;
+    }
     this.stopping.add(id);
     try {
       if (process.platform === "win32" && child.pid) {

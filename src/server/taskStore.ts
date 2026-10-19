@@ -18,6 +18,26 @@ export class StaleTaskError extends Error {
   }
 }
 
+export class MissingPreconditionError extends Error {
+  constructor() {
+    super("This update must include expectedUpdatedAt, the updatedAt value the form was rendered from.");
+    this.name = "MissingPreconditionError";
+  }
+}
+
+/** Rejects an update that does not carry a usable optimistic-concurrency token. */
+export function validateTaskPreconditions(patch: TaskPatch) {
+  if (typeof patch?.expectedUpdatedAt !== "number" || !Number.isFinite(patch.expectedUpdatedAt)) throw new MissingPreconditionError();
+  if (patch.expectedRevision !== undefined && (typeof patch.expectedRevision !== "number" || !Number.isFinite(patch.expectedRevision))) {
+    throw new Error("expectedRevision must be a number");
+  }
+}
+
+/** Per-task logical clock so every write is strictly newer than the previous one. */
+function nextUpdatedAt(task: { updatedAt: number }) {
+  return Math.max(Date.now(), task.updatedAt + 1);
+}
+
 export class TaskStore {
   private db: DatabaseSync;
 
@@ -107,19 +127,20 @@ export class TaskStore {
     const task = this.getTask(id);
     if (!task) throw new Error("Task not found");
     const { expectedRevision, expectedUpdatedAt, ...fields } = patch;
-    if ((expectedRevision !== undefined && expectedRevision !== task.revision)
-      || (expectedUpdatedAt !== undefined && expectedUpdatedAt !== task.updatedAt)) {
-      throw new StaleTaskError(task.revision, task.updatedAt, expectedRevision, expectedUpdatedAt);
-    }
     for (const key of Object.keys(fields)) {
       if (!["title", "spec", "criteria", "context", "draft"].includes(key)) throw new Error(`Unknown field: ${key}`);
       const value = fields[key as keyof typeof fields];
       if (typeof value !== "string" || value.length > 100_000) throw new Error(`Invalid ${key}`);
       if (["title", "spec", "criteria"].includes(key) && !value.trim()) throw new Error(`${key} is required`);
     }
+    if ((expectedRevision !== undefined && expectedRevision !== task.revision)
+      || (expectedUpdatedAt !== undefined && expectedUpdatedAt !== task.updatedAt)) {
+      throw new StaleTaskError(task.revision, task.updatedAt, expectedRevision, expectedUpdatedAt);
+    }
+    if (Object.keys(fields).length === 0) return task;
     const changed = (fields.spec !== undefined && fields.spec !== task.spec)
       || (fields.criteria !== undefined && fields.criteria !== task.criteria);
-    const updated = { ...task, ...fields, revision: task.revision + Number(changed), updatedAt: Date.now() };
+    const updated = { ...task, ...fields, revision: task.revision + Number(changed), updatedAt: nextUpdatedAt(task) };
     this.db.prepare("UPDATE tasks SET data = ? WHERE id = ?").run(JSON.stringify(updated), id);
     return updated;
   }
@@ -144,7 +165,7 @@ export class TaskStore {
   setWorkspace(id: string, workspace: TaskWorkspaceRecord) {
     const task = this.getTask(id);
     if (!task) throw new Error("Task not found");
-    const updated = { ...task, workspace, updatedAt: Date.now() };
+    const updated = { ...task, workspace, updatedAt: nextUpdatedAt(task) };
     this.db.prepare("UPDATE tasks SET data = ? WHERE id = ?").run(JSON.stringify(updated), id);
     return updated;
   }
@@ -188,7 +209,9 @@ export class TaskStore {
     const allowed: Record<TerminalSessionStatus, TerminalSessionStatus[]> = {
       starting: ["running", "interrupted", "stopped"],
       running: ["interrupted", "stopped"],
-      interrupted: ["running", "stopped"],
+      // An interrupted session requires the explicit recover confirmation to stop; nothing may
+      // promote it back to running, so a stale request cannot resurrect a dead process.
+      interrupted: ["stopped"],
       stopped: [],
     };
     if (record.status === status) return record;
@@ -214,9 +237,10 @@ export class TaskStore {
   reconcileTerminalSessions(liveSessionIds: string[]) {
     const live = new Set(liveSessionIds);
     return this.listTerminalSessions().map((record) => {
-      if (record.status === "stopped") return record;
+      // A stopped session is final, and an interrupted one lost its process: only the explicit
+      // recover confirmation may leave that state, so reconciliation never promotes it back.
+      if (record.status === "stopped" || record.status === "interrupted") return record;
       if (live.has(record.id)) return record.status === "running" ? record : this.setTerminalSessionStatus(record.id, "running");
-      if (record.status === "interrupted") return record;
       return this.setTerminalSessionStatus(record.id, "interrupted");
     });
   }

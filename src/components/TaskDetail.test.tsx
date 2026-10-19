@@ -185,4 +185,18 @@ describe("TaskDetail outgoing context preview", () => {
     await clickButton("Save changes");
     expect(document.body.textContent).toContain("changed after the form was loaded");
   });
+
+  it("flags the conflict and keeps the local draft when the server advances", async () => {
+    localStorage.setItem("saber.task.task-1", JSON.stringify({
+      fields: { title: "Local edit", spec: "Do work", criteria: "AC-01: done", context: "checkpoint", draft: "" },
+      baseRevision: 1, baseUpdatedAt: 1,
+    }));
+    await renderDetail();
+    const recovered = [...document.querySelectorAll("input")].find((element) => element.value === "Local edit");
+    if (!(recovered instanceof HTMLInputElement)) throw new Error("Recovered draft was not applied");
+    await act(async () => { root.render(createElement(TaskDetail, { task: { ...task, revision: 2, updatedAt: 99 }, onSaved: () => {} })); });
+    await flush();
+    expect(document.body.textContent).toContain("This task changed on the server");
+    expect(localStorage.getItem("saber.task.task-1")).not.toBeNull();
+  });
 });
