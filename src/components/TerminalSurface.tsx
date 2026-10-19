@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { acquireTerminalLock, markTerminalSessionRunning, recoverTerminalSession, releaseTerminalLock } from "../lib/api";
+import { acquireTerminalLock, markTerminalSessionRunning, reconcileTerminalSessions, recoverTerminalSession, releaseTerminalLock } from "../lib/api";
 import { isTerminalRuntimeAvailable } from "../lib/terminalRuntime";
+import { closeTerminalSession, recoverInterruptedTerminal } from "../lib/terminalLifecycle";
 import type { TerminalRuntime } from "../lib/terminalRuntime";
 import type { TaskSummary, TerminalSessionRecord } from "../lib/tasks";
 import "@xterm/xterm/css/xterm.css";
@@ -65,12 +66,40 @@ export function TerminalSurface({ task, session, active, startOnOpen, onSessionC
       sessionId = undefined;
       started = false;
       stopping = (async () => {
-        try {
-          await invoke("terminal_close", { sessionId: id });
-          await releaseTerminalLock(id);
-          const stopped = { ...(sessionRef.current ?? { id, taskId: task.id, workdir: task.workspace?.path ?? task.project, createdAt: Date.now() }), status: "stopped" as const, endedAt: Date.now() };
-          onSessionChangeRef.current(stopped);
-        } catch {}
+        const result = await closeTerminalSession({
+          id,
+          close: (sessionId) => invoke("terminal_close", { sessionId }),
+          listLive: () => invoke<string[]>("terminal_list"),
+          reconcile: (liveSessionIds) => reconcileTerminalSessions(liveSessionIds),
+          release: async (sessionId) => { await releaseTerminalLock(sessionId); },
+        });
+        const applySession = (record: TerminalSessionRecord | undefined) => {
+          if (!record) return;
+          sessionRef.current = record;
+          onSessionChangeRef.current(record);
+        };
+        if (result.status === "released") {
+          const stopped: TerminalSessionRecord = { ...(sessionRef.current ?? { id, taskId: task.id, workdir: task.workspace?.path ?? task.project, createdAt: Date.now() }), status: "stopped", endedAt: Date.now() };
+          // Keep the in-memory record in step with the persisted one so a later start cannot reattach a dead shell.
+          applySession(stopped);
+          return;
+        }
+        if (result.status === "interrupted") {
+          // The record was reconciled to interrupted, so the recovery confirmation now owns the lock.
+          applySession(result.session);
+          setState("interrupted");
+          return;
+        }
+        if (result.status === "still-running") {
+          applySession(result.session);
+          // The shell is alive and still owns its lock, so keep the terminal attached and usable.
+          if (!disposed) {
+            sessionId = id;
+            started = true;
+          }
+        }
+        setError(result.status === "unresolved" ? result.message : "Saber could not stop this shell. It is still running, so the workspace stays locked. Close the shell or the app, then retry.");
+        setState("error");
       })();
       return stopping;
     };
@@ -203,12 +232,18 @@ export function TerminalSurface({ task, session, active, startOnOpen, onSessionC
     if (!current || current.status !== "interrupted") return;
     setRecovering(true);
     try {
-      const stopped = await recoverTerminalSession(current.id, true);
-      sessionRef.current = stopped;
-      onSessionChangeRef.current(stopped);
+      const result = await recoverInterruptedTerminal({
+        id: current.id,
+        listLive: () => invoke<string[]>("terminal_list"),
+        recover: (id) => recoverTerminalSession(id, true),
+      });
+      if (result.status === "refused") {
+        setError(result.message);
+        return;
+      }
+      sessionRef.current = result.session;
+      onSessionChangeRef.current(result.session);
       setState("idle");
-    } catch (cause) {
-      setError(String(cause));
     } finally {
       setRecovering(false);
     }

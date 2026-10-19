@@ -19,6 +19,97 @@ pub struct TerminalSessions {
     sessions: Mutex<HashMap<String, Session>>,
 }
 
+/// Liveness of the process behind a session, as reported by the OS.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Liveness {
+    Alive,
+    Exited,
+    /// The child could not be polled. A transient error is not evidence of
+    /// death, so only an exited process may ever be dropped.
+    Unknown,
+}
+
+fn liveness(child: &mut (dyn Child + Send)) -> Liveness {
+    match child.try_wait() {
+        Ok(Some(_)) => Liveness::Exited,
+        Ok(None) => Liveness::Alive,
+        Err(_) => Liveness::Unknown,
+    }
+}
+
+/// The handle the session map needs to report liveness and terminate a pty.
+/// Testing implements this for a fake child so the reaping and close rules are
+/// covered without a real pty (whose `MasterPty` half has no fake).
+trait ManagedProcess {
+    fn process(&mut self) -> &mut (dyn Child + Send);
+}
+
+impl ManagedProcess for Session {
+    fn process(&mut self) -> &mut (dyn Child + Send) {
+        &mut *self.child
+    }
+}
+
+/// What closing a session must do with its map entry.
+enum CloseOutcome {
+    /// The process is gone; the entry must be dropped. An error describes a
+    /// failed reap that the caller should still surface.
+    Gone(Option<String>),
+    /// The process may still be running; the entry stays so it can be closed again.
+    StillAlive(String),
+}
+
+fn close_session(child: &mut (dyn Child + Send)) -> CloseOutcome {
+    match liveness(child) {
+        Liveness::Exited => CloseOutcome::Gone(None),
+        Liveness::Alive | Liveness::Unknown => match child.kill() {
+            // A successful kill is proof enough that the process is gone, so a
+            // failing reap reports the error but must not keep the entry.
+            Ok(()) => match child.wait() {
+                Ok(_) => CloseOutcome::Gone(None),
+                Err(error) => {
+                    CloseOutcome::Gone(Some(format!("Cannot reap terminal process: {error}")))
+                }
+            },
+            Err(error) => {
+                let message = format!("Cannot stop terminal process: {error}");
+                // Only a process that is confirmed alive keeps its entry: an
+                // exited one must not survive a failed kill. An unreadable state
+                // also keeps the entry, because Saber cannot prove the shell is
+                // gone and a dropped entry would orphan it.
+                if liveness(child) == Liveness::Exited {
+                    CloseOutcome::Gone(None)
+                } else {
+                    CloseOutcome::StillAlive(message)
+                }
+            }
+        },
+    }
+}
+
+fn reap_exited<S: ManagedProcess>(sessions: &mut HashMap<String, S>) {
+    sessions.retain(|_, session| liveness(session.process()) != Liveness::Exited);
+}
+
+fn close_entry<S: ManagedProcess>(
+    sessions: &mut HashMap<String, S>,
+    session_id: &str,
+) -> Result<(), String> {
+    let Some(session) = sessions.get_mut(session_id) else {
+        return Ok(());
+    };
+    match close_session(session.process()) {
+        CloseOutcome::Gone(error) => {
+            sessions.remove(session_id);
+            match error {
+                Some(message) => Err(message),
+                None => Ok(()),
+            }
+        }
+        CloseOutcome::StillAlive(message) => Err(message),
+    }
+}
+
 impl TerminalSessions {
     fn start(
         &self,
@@ -136,10 +227,15 @@ impl TerminalSessions {
     }
 
     fn list(&self) -> Result<Vec<String>, String> {
-        self.sessions
+        let mut sessions = self
+            .sessions
             .lock()
-            .map(|sessions| sessions.keys().cloned().collect())
-            .map_err(|_| "Terminal state is unavailable".to_string())
+            .map_err(|_| "Terminal state is unavailable".to_string())?;
+        // Liveness is the authority: an exited shell must not be reported as a
+        // running terminal, or the record is reconciled back to `running` and
+        // locks the workspace behind a dead pty.
+        reap_exited(&mut sessions);
+        Ok(sessions.keys().cloned().collect())
     }
 
     fn close(&self, session_id: &str) -> Result<(), String> {
@@ -147,26 +243,7 @@ impl TerminalSessions {
             .sessions
             .lock()
             .map_err(|_| "Terminal state is unavailable".to_string())?;
-        let Some(session) = sessions.get_mut(session_id) else {
-            return Ok(());
-        };
-        if session
-            .child
-            .try_wait()
-            .map_err(|error| format!("Cannot check terminal process: {error}"))?
-            .is_none()
-        {
-            session
-                .child
-                .kill()
-                .map_err(|error| format!("Cannot stop terminal process: {error}"))?;
-        }
-        session
-            .child
-            .wait()
-            .map_err(|error| format!("Cannot reap terminal process: {error}"))?;
-        sessions.remove(session_id);
-        Ok(())
+        close_entry(&mut sessions, session_id)
     }
 
     pub fn close_all(&self) {
@@ -305,8 +382,10 @@ fn is_executable_file(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use portable_pty::{ChildKiller, ExitStatus};
     use std::io::Read;
     use std::path::Path;
+    use std::sync::Arc;
     use std::time::{Duration, Instant};
 
     fn shell_command(cwd: &Path) -> (PathBuf, Vec<String>) {
@@ -453,5 +532,241 @@ mod tests {
         )
         .unwrap_err()
         .contains("terminal directory"));
+    }
+
+    /// A child whose poll, kill and reap results the tests control.
+    #[derive(Debug)]
+    struct FakeChild {
+        state: Arc<Mutex<FakeChildState>>,
+    }
+
+    #[derive(Debug, Default)]
+    struct FakeChildState {
+        exited: bool,
+        try_wait_errors: bool,
+        kill_errors: bool,
+        wait_errors: bool,
+        /// The process dies between two polls, so a failed kill can be followed
+        /// by a report that the process is gone.
+        exit_on_next_poll: bool,
+    }
+
+    impl FakeChild {
+        fn new(state: FakeChildState) -> Self {
+            Self {
+                state: Arc::new(Mutex::new(state)),
+            }
+        }
+
+        fn alive() -> Self {
+            Self::new(FakeChildState::default())
+        }
+
+        fn gone() -> Self {
+            Self::new(FakeChildState {
+                exited: true,
+                ..FakeChildState::default()
+            })
+        }
+
+        fn lock(&self) -> std::sync::MutexGuard<'_, FakeChildState> {
+            self.state.lock().expect("fake child state is available")
+        }
+    }
+
+    fn fake_error(message: &str) -> std::io::Error {
+        std::io::Error::other(message.to_string())
+    }
+
+    impl Child for FakeChild {
+        fn try_wait(&mut self) -> std::io::Result<Option<ExitStatus>> {
+            let mut state = self.lock();
+            if state.exit_on_next_poll {
+                state.exit_on_next_poll = false;
+                state.exited = true;
+            }
+            if state.try_wait_errors {
+                return Err(fake_error("poll failed"));
+            }
+            Ok(state.exited.then(|| ExitStatus::with_exit_code(0)))
+        }
+
+        fn wait(&mut self) -> std::io::Result<ExitStatus> {
+            let mut state = self.lock();
+            if state.wait_errors {
+                return Err(fake_error("reap failed"));
+            }
+            state.exited = true;
+            Ok(ExitStatus::with_exit_code(0))
+        }
+
+        fn process_id(&self) -> Option<u32> {
+            None
+        }
+
+        #[cfg(windows)]
+        fn as_raw_handle(&self) -> Option<std::os::windows::io::RawHandle> {
+            None
+        }
+    }
+
+    impl ChildKiller for FakeChild {
+        fn kill(&mut self) -> std::io::Result<()> {
+            let mut state = self.lock();
+            if state.kill_errors {
+                return Err(fake_error("kill failed"));
+            }
+            state.exited = true;
+            Ok(())
+        }
+
+        fn clone_killer(&self) -> Box<dyn ChildKiller + Send + Sync> {
+            Box::new(FakeKiller {
+                state: Arc::clone(&self.state),
+            })
+        }
+    }
+
+    #[derive(Debug)]
+    struct FakeKiller {
+        state: Arc<Mutex<FakeChildState>>,
+    }
+
+    impl ChildKiller for FakeKiller {
+        fn kill(&mut self) -> std::io::Result<()> {
+            self.state
+                .lock()
+                .expect("fake child state is available")
+                .exited = true;
+            Ok(())
+        }
+
+        fn clone_killer(&self) -> Box<dyn ChildKiller + Send + Sync> {
+            Box::new(FakeKiller {
+                state: Arc::clone(&self.state),
+            })
+        }
+    }
+
+    #[derive(Debug)]
+    struct FakeSession {
+        child: FakeChild,
+    }
+
+    impl ManagedProcess for FakeSession {
+        fn process(&mut self) -> &mut (dyn Child + Send) {
+            &mut self.child
+        }
+    }
+
+    const SESSION: &str = "terminal-session-under-test";
+
+    fn sessions_with(child: FakeChild) -> HashMap<String, FakeSession> {
+        HashMap::from([(SESSION.to_string(), FakeSession { child })])
+    }
+
+    fn session_ids(sessions: &HashMap<String, FakeSession>) -> Vec<String> {
+        let mut ids: Vec<String> = sessions.keys().cloned().collect();
+        ids.sort();
+        ids
+    }
+
+    #[test]
+    fn terminal_session_list_reaps_an_exited_process() {
+        let mut sessions = sessions_with(FakeChild::gone());
+        reap_exited(&mut sessions);
+        assert!(sessions.is_empty(), "an exited shell must not be listed");
+    }
+
+    #[test]
+    fn terminal_session_list_keeps_a_live_or_unreadable_process() {
+        let mut sessions = sessions_with(FakeChild::alive());
+        sessions.insert(
+            "terminal-session-unreadable".to_string(),
+            FakeSession {
+                child: FakeChild::new(FakeChildState {
+                    try_wait_errors: true,
+                    ..FakeChildState::default()
+                }),
+            },
+        );
+        reap_exited(&mut sessions);
+        assert_eq!(
+            session_ids(&sessions),
+            vec![SESSION.to_string(), "terminal-session-unreadable".to_string()]
+        );
+    }
+
+    #[test]
+    fn terminal_session_close_drops_an_already_exited_process() {
+        let mut sessions = sessions_with(FakeChild::gone());
+        assert!(close_entry(&mut sessions, SESSION).is_ok());
+        assert!(sessions.is_empty());
+        assert!(
+            close_entry(&mut sessions, SESSION).is_ok(),
+            "closing a session that is not in the map is a no-op"
+        );
+    }
+
+    #[test]
+    fn terminal_session_close_terminates_a_running_process_and_drops_it() {
+        let mut sessions = sessions_with(FakeChild::alive());
+        assert!(close_entry(&mut sessions, SESSION).is_ok());
+        assert!(sessions.is_empty());
+    }
+
+    #[test]
+    fn terminal_session_close_drops_the_entry_when_reaping_fails_after_a_kill() {
+        let mut sessions = sessions_with(FakeChild::new(FakeChildState {
+            wait_errors: true,
+            ..FakeChildState::default()
+        }));
+        let error = close_entry(&mut sessions, SESSION).unwrap_err();
+        assert!(error.contains("reap"), "unexpected error: {error}");
+        assert!(
+            sessions.is_empty(),
+            "a process that was killed must not survive a failed reap"
+        );
+    }
+
+    #[test]
+    fn terminal_session_close_drops_the_entry_when_a_failed_kill_finds_the_process_gone() {
+        let mut sessions = sessions_with(FakeChild::new(FakeChildState {
+            kill_errors: true,
+            exit_on_next_poll: true,
+            ..FakeChildState::default()
+        }));
+        assert!(close_entry(&mut sessions, SESSION).is_ok());
+        assert!(
+            sessions.is_empty(),
+            "a process that exited on its own must not survive a failed kill"
+        );
+    }
+
+    #[test]
+    fn terminal_session_close_keeps_a_process_that_is_still_alive() {
+        let mut sessions = sessions_with(FakeChild::new(FakeChildState {
+            kill_errors: true,
+            ..FakeChildState::default()
+        }));
+        let error = close_entry(&mut sessions, SESSION).unwrap_err();
+        assert!(error.contains("stop"), "unexpected error: {error}");
+        assert_eq!(sessions.len(), 1, "a confirmed live process keeps its entry");
+    }
+
+    #[test]
+    fn terminal_session_close_keeps_a_process_whose_liveness_cannot_be_read() {
+        let mut sessions = sessions_with(FakeChild::new(FakeChildState {
+            try_wait_errors: true,
+            kill_errors: true,
+            ..FakeChildState::default()
+        }));
+        let error = close_entry(&mut sessions, SESSION).unwrap_err();
+        assert!(error.contains("stop"), "unexpected error: {error}");
+        assert_eq!(
+            sessions.len(),
+            1,
+            "an unreadable liveness state must not drop the entry"
+        );
     }
 }
