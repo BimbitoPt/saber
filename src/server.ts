@@ -136,7 +136,11 @@ async function runShutdown(deps: ShutdownDeps): Promise<void> {
 
 export function shutdownResources(deps: ShutdownDeps = defaultShutdownDeps): Promise<void> {
   if (deps !== defaultShutdownDeps) return runShutdown(deps);
-  shutdownOnce ??= runShutdown(deps);
+  // Deduplicate concurrent shutdowns, but let a later one run again: a dev server
+  // started after an earlier shutdown must still be stopped by the next one.
+  shutdownOnce ??= runShutdown(deps).finally(() => {
+    shutdownOnce = undefined;
+  });
   return shutdownOnce;
 }
 

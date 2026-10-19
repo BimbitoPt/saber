@@ -162,15 +162,36 @@ export class DevServerManager {
   private readonly deps: DevServerDeps;
   private readonly entries = new Map<string, Entry>();
   private readonly stopping = new Map<string, Promise<void>>();
+  private readonly starting = new Map<string, Promise<{ port: number }>>();
   private readonly monitors = new Map<string, Promise<void>>();
+  /** Ports held by an in-flight allocation, before its entry exists. */
+  private readonly reserved = new Set<number>();
 
   constructor(deps: DevServerDeps) {
     this.deps = deps;
   }
 
   async start(name: string): Promise<{ port: number }> {
+    // One start per name: a second caller waits for the first instead of spawning a twin.
+    const inFlight = this.starting.get(name);
+    if (inFlight) return inFlight;
+
+    const task = this.launch(name);
+    this.starting.set(name, task);
+    try {
+      return await task;
+    } finally {
+      if (this.starting.get(name) === task) this.starting.delete(name);
+    }
+  }
+
+  private async launch(name: string): Promise<{ port: number }> {
     const existing = this.entries.get(name);
-    if (existing && this.isLive(existing)) return { port: existing.port };
+    if (existing) {
+      if (this.isLive(existing)) return { port: existing.port };
+      // A process that survived a stop still owns its port, so this start must wait.
+      if (this.holdsProcess(existing)) throw new Error(`dev server ${name} is still shutting down`);
+    }
 
     const project = this.deps.listProjects().find((p) => p.name === name);
     if (!project) throw new Error(`unknown project: ${name}`);
@@ -182,19 +203,23 @@ export class DevServerManager {
       proc = this.deps.spawnServer(project, port);
     } catch (error) {
       // Keep a failed projection so the pane reports `down` instead of hiding the attempt.
+      this.reserved.delete(port);
       this.entries.set(name, { project, port, state: "failed", startedAt: this.deps.now(), proc: null });
       throw error;
     }
 
     const entry: Entry = { project, port, state: "starting", startedAt: this.deps.now(), proc };
     this.entries.set(name, entry);
+    // The entry now reserves its port, so the allocation reservation can be released.
+    this.reserved.delete(port);
     this.watch(name, entry);
     return { port };
   }
 
   /**
-   * Forces a live stop and always clears the entry: unknown names and already-stopped
-   * entries are success, and a kill that times out or throws still drops the entry.
+   * Idempotent stop: unknown names and already-stopped entries are success. The
+   * entry is cleared once the process is confirmed gone, and otherwise kept so its
+   * port cannot be handed out while the old server still serves it.
    */
   async stop(name: string): Promise<boolean> {
     const inFlight = this.stopping.get(name);
@@ -202,6 +227,10 @@ export class DevServerManager {
       await inFlight;
       return true;
     }
+    // A start that has not registered its entry yet must finish before it can be stopped.
+    const pending = this.starting.get(name);
+    if (pending) await pending.catch(() => {});
+
     const entry = this.entries.get(name);
     if (!entry) return true;
 
@@ -259,6 +288,12 @@ export class DevServerManager {
     return typeof pid === "number" && this.deps.isAlive(pid);
   }
 
+  /** True while the entry still owns a process, whatever state it reports. */
+  private holdsProcess(entry: Entry): boolean {
+    const pid = entry.proc?.pid;
+    return typeof pid === "number" && this.deps.isAlive(pid);
+  }
+
   private watch(name: string, entry: Entry): void {
     const proc = entry.proc;
     if (!proc) return;
@@ -311,6 +346,13 @@ export class DevServerManager {
         console.error(`dev server ${name} kill failed: ${String(error)}`);
       }
     }, this.deps.stopTimeoutMs);
+    if (this.deps.isAlive(pid)) {
+      // The process survived the kill, so the entry must stay: dropping it would hand its
+      // port to the next start while the old server still serves it. reconcile() removes
+      // it once the process is really gone.
+      entry.state = "failed";
+      return;
+    }
     entry.state = "exited";
     entry.proc = null;
     this.forget(name, entry);
@@ -334,22 +376,26 @@ export class DevServerManager {
   }
 
   private async allocatePort(project: Project): Promise<number> {
-    const declared = project.port;
-    if (declared && declared !== APP_PORT && !this.portTaken(declared) && !(await this.deps.probe(declared))) {
-      return declared;
-    }
+    const candidates: number[] = [];
+    if (project.port && project.port !== APP_PORT) candidates.push(project.port);
     const { min, max } = this.deps.portRange;
     for (let port = min; port <= max; port++) {
+      if (!candidates.includes(port)) candidates.push(port);
+    }
+    for (const port of candidates) {
       if (this.portTaken(port)) continue;
-      if (await this.deps.probe(port)) continue;
-      return port;
+      // Reserve before probing so two concurrent starts cannot both pick this port.
+      this.reserved.add(port);
+      if (!(await this.deps.probe(port).catch(() => false))) return port;
+      this.reserved.delete(port);
     }
     throw new Error(`no free dev port in ${min}-${max}`);
   }
 
-  /** Only live entries reserve a port; a dead projection must not hold one. */
+  /** A port is taken by an in-flight allocation or by any entry that still owns its process. */
   private portTaken(port: number): boolean {
-    return [...this.entries.values()].some((entry) => entry.port === port && this.isLive(entry));
+    if (this.reserved.has(port)) return true;
+    return [...this.entries.values()].some((entry) => entry.port === port && this.holdsProcess(entry));
   }
 }
 

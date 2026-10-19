@@ -57,6 +57,10 @@ export class BrowserSession {
     const existing = this.page;
     if (existing && this.browser && !existing.isClosed()) return Promise.resolve(existing);
     if (!this.launching) {
+      // A page that closed before its own `close` event arrived still owns a live
+      // browser, so the handles are dropped before relaunching to avoid leaking it.
+      if (existing) this.handleLost(existing);
+      else if (this.browser) this.handleLost(this.browser);
       const epoch = this.epoch;
       this.launching = this.launchPage(epoch).finally(() => {
         this.launching = null;

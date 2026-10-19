@@ -54,18 +54,20 @@ export function TerminalSurface({ task, session, active, startOnOpen, onSessionC
     let disposed = false;
     let started = false;
     let sessionId: string | undefined;
-    let stopping: Promise<void> | undefined;
+    let stopping: { id: string; promise: Promise<void> } | undefined;
     let unlistenOutput: (() => void) | undefined;
     let unlistenExit: (() => void) | undefined;
     let resizeObserver: ResizeObserver | undefined;
 
     const stop = () => {
-      if (stopping) return stopping;
+      // Only one stop per session id at a time: a second shell in this mount must not
+      // be blocked by a latch left behind by the first.
       const id = sessionId;
       if (!id) return Promise.resolve();
+      if (stopping?.id === id) return stopping.promise;
       sessionId = undefined;
       started = false;
-      stopping = (async () => {
+      const promise = (async () => {
         const result = await closeTerminalSession({
           id,
           close: (sessionId) => invoke("terminal_close", { sessionId }),
@@ -101,7 +103,12 @@ export function TerminalSurface({ task, session, active, startOnOpen, onSessionC
         setError(result.status === "unresolved" ? result.message : "Saber could not stop this shell. It is still running, so the workspace stays locked. Close the shell or the app, then retry.");
         setState("error");
       })();
-      return stopping;
+      const record = { id, promise };
+      stopping = record;
+      void promise.finally(() => {
+        if (stopping === record) stopping = undefined;
+      });
+      return promise;
     };
 
     const attach = async (id: string, startProcess: boolean, workdir: string, createdAt: number) => {

@@ -112,6 +112,21 @@ describe("verification browser lifecycle", () => {
     expect(await crashedSession.ensurePage()).not.toBe(crashedPage);
   });
 
+  it("PROC-04 drops a page that closed before its event so the old browser is not leaked", async () => {
+    const [first, second] = [new FakeBrowser(), new FakeBrowser()];
+    const launch = queuedLauncher([first, second]);
+    const session = createBrowserSession({ launch });
+
+    const page = (await session.ensurePage()) as FakePage;
+    // The page went away but its `close` event never arrived.
+    page.closed = true;
+
+    expect(await session.ensurePage()).not.toBe(page);
+    expect(first.closes).toBe(1);
+    expect(launch).toHaveBeenCalledTimes(2);
+    expect(session.state()).toBe("ready");
+  });
+
   it("PROC-04 closes the handle it already created when a launch fails partway", async () => {
     const broken = new FakeBrowser();
     broken.failContext = true;

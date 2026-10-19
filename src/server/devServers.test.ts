@@ -102,22 +102,39 @@ describe("dev server lifecycle", () => {
     expect(h.manager.getEntry("alpha")).toBeUndefined();
   });
 
-  it("PROC-02 clears the entry when the kill times out or rejects", async () => {
+  it("PROC-02 keeps the entry and its port when the process survives the kill", async () => {
     const stuck = harness({ waitUpMs: 1_000, stopTimeoutMs: 10 });
     await stuck.manager.start("alpha");
     await stuck.manager.settle("alpha");
     stuck.killTree.mockImplementation(() => new Promise<void>(() => {}));
 
     expect(await stuck.manager.stop("alpha")).toBe(true);
-    expect(stuck.manager.list()).toEqual([]);
+    expect(stuck.manager.getEntry("alpha")?.state).toBe("failed");
+    expect(stuck.manager.list()).toEqual([{ project: "alpha", port: DEV_PORT_MIN, status: "down" }]);
 
-    const failing = harness({ waitUpMs: 1_000, stopTimeoutMs: 50 });
-    await failing.manager.start("alpha");
-    await failing.manager.settle("alpha");
-    failing.killTree.mockRejectedValue(new Error("taskkill missing"));
+    // The survivor still owns 8090, so another project must not be handed it, and a
+    // restart of the same name must wait rather than spawn a twin.
+    expect((await stuck.manager.start("beta")).port).not.toBe(DEV_PORT_MIN);
+    await expect(stuck.manager.start("alpha")).rejects.toThrow("still shutting down");
 
-    expect(await failing.manager.stop("alpha")).toBe(true);
-    expect(failing.manager.list()).toEqual([]);
+    // Once the process is really gone, reconcile drops the entry and frees the port.
+    stuck.alive.delete(100);
+    expect(stuck.manager.reconcile()).toContain("alpha");
+    expect(stuck.manager.getEntry("alpha")).toBeUndefined();
+  });
+
+  it("PROC-02 clears the entry when the kill reports failure but the process is gone", async () => {
+    const h = harness({ waitUpMs: 1_000, stopTimeoutMs: 50 });
+    await h.manager.start("alpha");
+    await h.manager.settle("alpha");
+    h.killTree.mockImplementation(async (pid: number) => {
+      h.alive.delete(pid);
+      throw new Error("taskkill missing");
+    });
+
+    expect(await h.manager.stop("alpha")).toBe(true);
+    expect(h.manager.list()).toEqual([]);
+    expect(h.manager.getEntry("alpha")).toBeUndefined();
   });
 
   it("PROC-02 does not kill an entry whose process is already gone", async () => {
@@ -190,6 +207,22 @@ describe("dev server lifecycle", () => {
 
     for (let port = DEV_PORT_MIN; port <= DEV_PORT_MIN + 9; port++) h.serving.add(port);
     await expect(h.manager.start("alpha")).rejects.toThrow(`no free dev port in ${DEV_PORT_MIN}-${DEV_PORT_MIN + 9}`);
+  });
+
+  it("PROC-03 gives concurrent starts distinct ports and one process per name", async () => {
+    const h = harness({ waitUpMs: 1_000 });
+
+    const [alpha, beta] = await Promise.all([h.manager.start("alpha"), h.manager.start("beta")]);
+    expect(alpha.port).not.toBe(beta.port);
+    expect(h.spawnServer).toHaveBeenCalledTimes(2);
+    await h.manager.settle("alpha");
+    await h.manager.settle("beta");
+
+    // A name that is already starting must not spawn a twin.
+    const [first, second] = await Promise.all([h.manager.start("alpha"), h.manager.start("alpha")]);
+    expect(first.port).toBe(alpha.port);
+    expect(second.port).toBe(alpha.port);
+    expect(h.spawnServer).toHaveBeenCalledTimes(2);
   });
 
   it("resolves the Bun binary instead of the bundled Node that runs the packaged server", () => {
