@@ -133,8 +133,9 @@ export class TaskStore {
       if (typeof value !== "string" || value.length > 100_000) throw new Error(`Invalid ${key}`);
       if (["title", "spec", "criteria"].includes(key) && !value.trim()) throw new Error(`${key} is required`);
     }
+    validateTaskPreconditions(patch);
     if ((expectedRevision !== undefined && expectedRevision !== task.revision)
-      || (expectedUpdatedAt !== undefined && expectedUpdatedAt !== task.updatedAt)) {
+      || expectedUpdatedAt !== task.updatedAt) {
       throw new StaleTaskError(task.revision, task.updatedAt, expectedRevision, expectedUpdatedAt);
     }
     if (Object.keys(fields).length === 0) return task;

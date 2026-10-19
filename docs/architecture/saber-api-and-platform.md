@@ -49,7 +49,7 @@ The routes below are implemented in `src/server.ts` and consumed by `src/lib/api
 | --- | --- | --- |
 | `GET /api/tasks` | — | `TaskSummary[]` with latest run and derived verification summary. |
 | `POST /api/tasks` | `TaskInput`: `project`, `title`, `spec`, `criteria` | `TaskRecord`, `201`. Project must resolve to an existing absolute directory or known project entry. |
-| `PATCH /api/tasks/{taskId}` | Partial `title`, `spec`, `criteria`, `context`, or `draft` | Updated `TaskRecord`. Only `spec`/`criteria` changes increment the spec `revision`. |
+| `PATCH /api/tasks/{taskId}` | Partial `title`, `spec`, `criteria`, `context`, or `draft`, plus the required concurrency token `expectedUpdatedAt` (and optional `expectedRevision`) | Updated `TaskRecord`. Missing token: `428 precondition_required`. Token does not match the stored record: `409 stale_task`. Only `spec`/`criteria` changes increment the spec `revision`. |
 | `GET /api/tasks/{taskId}/runs` | — | `RunRecord[]`, newest first. |
 | `POST /api/tasks/{taskId}/runs` | Optional `provider`, `model`, `followup` | `{ id }`, `201`. Checks provider readiness and workspace/terminal conflicts; the run snapshots task specification, criteria, and context. |
 | `GET /api/tasks/{taskId}/verifications` | — | `{ records, summary }`. Summary is derived from stable criterion IDs and current spec revision. |

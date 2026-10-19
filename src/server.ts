@@ -3,7 +3,7 @@ import { realpathSync, statSync } from "node:fs";
 import { isAbsolute } from "node:path";
 
 import { consumeLastCapturedError, describeError } from "./lib/error-capture";
-import { getTaskStore, MissingPreconditionError, StaleTaskError, validateTaskPreconditions } from "./server/taskStore";
+import { getTaskStore, MissingPreconditionError, StaleTaskError } from "./server/taskStore";
 import { getAgentRuns } from "./server/agentRuns";
 import { GitWorkspaceService, taskWorkdir } from "./server/gitWorkspaces";
 import { getTerminalLocks } from "./server/terminalLocks";
@@ -218,7 +218,6 @@ async function handleApi(request: Request): Promise<Response | null> {
       if (!getTaskStore().getTask(taskMatch[1])) return jsonResponse({ error: "Task not found" }, 404);
       const body = await request.json() as TaskPatch;
       if (!body || Array.isArray(body) || typeof body !== "object") throw new Error("Invalid task patch");
-      validateTaskPreconditions(body);
       return jsonResponse(getTaskStore().updateTask(taskMatch[1], body));
     } catch (error) {
       if (error instanceof MissingPreconditionError) return jsonResponse({ error: error.message, code: "precondition_required" }, 428);

@@ -34,8 +34,8 @@ try {
     mkdirSync(projectDir, { recursive: true });
     const created = await fetch(`${url}api/tasks`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ project: projectDir, title: `Benchmark task ${number}`, spec: "Synthetic responsiveness fixture.", criteria: "RBL: keep fixture isolated." }) });
     if (!created.ok) throw new Error(`Failed to create isolated task fixture ${number}: ${await created.text()}`);
-    const task = await created.json() as { id: string; title: string };
-    const updated = await fetch(`${url}api/tasks/${task.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ context: `Checkpoint for task ${number}`, draft: `Next action ${i + 1}` }) });
+    const task = await created.json() as { id: string; title: string; updatedAt: number };
+    const updated = await fetch(`${url}api/tasks/${task.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ context: `Checkpoint for task ${number}`, draft: `Next action ${i + 1}`, expectedUpdatedAt: task.updatedAt }) });
     if (!updated.ok) throw new Error(`Failed to seed context for isolated task ${number}: ${await updated.text()}`);
     tasks.push(task);
   }
