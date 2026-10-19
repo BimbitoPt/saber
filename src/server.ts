@@ -3,7 +3,7 @@ import { realpathSync, statSync } from "node:fs";
 import { isAbsolute } from "node:path";
 
 import { consumeLastCapturedError, describeError } from "./lib/error-capture";
-import { getTaskStore } from "./server/taskStore";
+import { getTaskStore, MissingPreconditionError, StaleTaskError } from "./server/taskStore";
 import { getAgentRuns } from "./server/agentRuns";
 import { GitWorkspaceService, taskWorkdir } from "./server/gitWorkspaces";
 import { getTerminalLocks } from "./server/terminalLocks";
@@ -219,7 +219,11 @@ async function handleApi(request: Request): Promise<Response | null> {
       const body = await request.json() as TaskPatch;
       if (!body || Array.isArray(body) || typeof body !== "object") throw new Error("Invalid task patch");
       return jsonResponse(getTaskStore().updateTask(taskMatch[1], body));
-    } catch (error) { return errorResponse(error, 400); }
+    } catch (error) {
+      if (error instanceof MissingPreconditionError) return jsonResponse({ error: error.message, code: "precondition_required" }, 428);
+      if (error instanceof StaleTaskError) return jsonResponse({ error: error.message, code: "stale_task" }, 409);
+      return errorResponse(error, 400);
+    }
   }
 
   const taskRuns = /^\/api\/tasks\/([^/]+)\/runs$/.exec(path);

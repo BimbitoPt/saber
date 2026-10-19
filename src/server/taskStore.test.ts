@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { TaskStore } from "./taskStore";
+import { TaskStore, StaleTaskError, MissingPreconditionError, validateTaskPreconditions } from "./taskStore";
+import type { TaskPatch } from "../lib/tasks";
 
 const directories: string[] = [];
 const stores: TaskStore[] = [];
@@ -24,11 +25,11 @@ describe("persistent tasks", () => {
   it("restores context, drafts, run scope and interruption after reopening", () => {
     const { store, path } = setup();
     const task = store.createTask(input);
-    store.updateTask(task.id, { context: "Next: check keyboard navigation", draft: "Also test refresh" });
+    const seeded = store.updateTask(task.id, { context: "Next: check keyboard navigation", draft: "Also test refresh", expectedUpdatedAt: task.updatedAt });
     const run = store.createRun(task.id, "Implement revision 1", "test-model");
     store.setNativeSession(run.id, "native-123");
     store.appendEvent(run.id, "first event");
-    store.updateTask(task.id, { spec: "Updated specification" });
+    store.updateTask(task.id, { spec: "Updated specification", expectedUpdatedAt: seeded.updatedAt });
     store.close();
     const reopened = new TaskStore(path);
     stores.push(reopened);
@@ -82,6 +83,23 @@ describe("persistent tasks", () => {
     expect(store.getTask(task.id)?.revision).toBe(1);
   });
 
+  it("rejects a stale task form and preserves the newer revision", () => {
+    const { store } = setup();
+    const task = store.createTask(input);
+    const staleRevision = task.revision;
+    store.updateTask(task.id, { spec: "Newer specification", expectedUpdatedAt: task.updatedAt });
+    const newer = store.getTask(task.id)!;
+    expect(newer.revision).toBe(staleRevision + 1);
+
+    expect(() => store.updateTask(task.id, { spec: "Older form text", expectedRevision: staleRevision, expectedUpdatedAt: task.updatedAt })).toThrow(StaleTaskError);
+    expect(() => store.updateTask(task.id, { title: "Older title", expectedUpdatedAt: newer.updatedAt - 1 })).toThrow("changed after the form was loaded");
+    expect(store.getTask(task.id)?.spec).toBe("Newer specification");
+    expect(store.getTask(task.id)?.title).toBe("Fix navigation");
+
+    const accepted = store.updateTask(task.id, { title: "Fresh title", expectedRevision: newer.revision, expectedUpdatedAt: newer.updatedAt });
+    expect(accepted.title).toBe("Fresh title");
+  });
+
   it("blocks root and sibling directories belonging to the same checkout", () => {
     const { store, path } = setup();
     const root = join(path, "..", "repository");
@@ -104,7 +122,7 @@ describe("persistent tasks", () => {
     const first = store.createVerification({ id: "verification-1", taskId: task.id, criterionId: "AC-01", criterionText: "Selection survives refresh", revision: 1, outcome: "passed", check: "bun run test", evidence: "passed", checkedAt: 10 });
     const failed = store.createVerification({ ...first, id: "verification-2", outcome: "failed", evidence: "regression", checkedAt: 11 });
     expect(store.listTasks()[0].verificationSummary).toMatchObject({ state: "failed", failed: 1 });
-    store.updateTask(task.id, { criteria: "AC-01: Selection survives refresh\nAC-02: No data is lost" });
+    store.updateTask(task.id, { criteria: "AC-01: Selection survives refresh\nAC-02: No data is lost", expectedUpdatedAt: task.updatedAt });
     expect(store.listTasks()[0].verificationSummary).toMatchObject({ state: "incomplete", stale: 1, total: 2 });
     store.close();
     const reopened = new TaskStore(path);
@@ -166,5 +184,31 @@ describe("persistent tasks", () => {
     store.createTerminalSession({ id: "terminal-live", taskId: task.id, workdir: task.project, status: "starting", createdAt: 11 });
     expect(store.reconcileTerminalSessions(["terminal-live"])[0].status).toBe("running");
     expect(store.reconcileTerminalSessions([])[0].status).toBe("interrupted");
+  });
+
+  it("requires a usable form token and keeps every write strictly newer", () => {
+    const { store } = setup();
+    const task = store.createTask(input);
+    expect(() => validateTaskPreconditions({ title: "No token" } as TaskPatch)).toThrow(MissingPreconditionError);
+    expect(() => validateTaskPreconditions({ title: "Bad token", expectedUpdatedAt: "1" } as never)).toThrow(MissingPreconditionError);
+    expect(() => validateTaskPreconditions({ title: "Bad token", expectedUpdatedAt: Number.NaN })).toThrow(MissingPreconditionError);
+    expect(() => validateTaskPreconditions({ title: "Bad revision", expectedUpdatedAt: task.updatedAt, expectedRevision: "1" } as never)).toThrow("expectedRevision must be a number");
+    validateTaskPreconditions({ title: "Good", expectedUpdatedAt: task.updatedAt, expectedRevision: task.revision });
+    expect(() => store.updateTask(task.id, { title: "No token" })).toThrow(MissingPreconditionError);
+
+    const first = store.updateTask(task.id, { context: "one", expectedUpdatedAt: task.updatedAt });
+    const second = store.updateTask(task.id, { context: "two", expectedUpdatedAt: first.updatedAt });
+    expect(second.updatedAt).toBeGreaterThan(first.updatedAt);
+    expect(() => store.updateTask(task.id, { context: "stale", expectedUpdatedAt: first.updatedAt })).toThrow(StaleTaskError);
+    expect(store.getTask(task.id)?.context).toBe("two");
+  });
+
+  it("never resurrects an interrupted terminal session during reconciliation", () => {
+    const { store } = setup();
+    const task = store.createTask(input);
+    store.createTerminalSession({ id: "terminal-dead", taskId: task.id, workdir: task.project, status: "running", createdAt: 14 });
+    expect(store.reconcileTerminalSessions([])[0].status).toBe("interrupted");
+    expect(store.reconcileTerminalSessions(["terminal-dead"])[0].status).toBe("interrupted");
+    expect(() => store.setTerminalSessionStatus("terminal-dead", "running")).toThrow("Cannot change terminal session");
   });
 });

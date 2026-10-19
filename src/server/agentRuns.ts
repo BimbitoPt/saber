@@ -115,16 +115,37 @@ export class AgentRuns {
         this.store.appendEvent(run.id, JSON.stringify({ type: "provider_error", message: data.toString().slice(0, 16000) }));
       });
       child.on("error", (error) => {
-        this.store.appendEvent(run.id, JSON.stringify({ type: "provider_error", message: error.message }));
-        this.store.finishRun(run.id, "error", null);
+        if (!this.active.has(run.id)) return;
+        this.active.delete(run.id);
+        try { this.store.appendEvent(run.id, JSON.stringify({ type: "provider_error", message: error.message })); } catch {}
+        try {
+          this.store.finishRun(run.id, "error", null);
+        } catch {
+          // A close event may have already settled the run; the terminal state stands.
+        } finally {
+          this.stopping.delete(run.id);
+        }
       });
       child.on("close", (code) => {
-        append(pending + decoder.end());
-        pending = "";
+        if (!this.active.has(run.id)) return;
         this.active.delete(run.id);
-        const current = this.store.getRun(run.id);
-        if (current?.status === "running") this.store.finishRun(run.id, this.stopping.has(run.id) ? "stopped" : code === 0 && !providerFailed ? "done" : "error", code);
-        this.stopping.delete(run.id);
+        try {
+          append(pending + decoder.end());
+        } catch {
+          // A failed output flush must not stop the run from reaching a terminal state.
+        } finally {
+          pending = "";
+        }
+        try {
+          const current = this.store.getRun(run.id);
+          if (current?.status === "running") {
+            this.store.finishRun(run.id, this.stopping.has(run.id) ? "stopped" : code === 0 && !providerFailed ? "done" : "error", code);
+          }
+        } catch {
+          // A concurrent error event may have already settled the run; the terminal state stands.
+        } finally {
+          this.stopping.delete(run.id);
+        }
       });
     } catch (error) {
       this.store.appendEvent(run.id, JSON.stringify({ type: "provider_error", message: String(error) }));
@@ -213,8 +234,17 @@ export class AgentRuns {
   }
 
   async stop(id: string) {
+    const run = this.store.getRun(id);
+    if (!run) throw new Error("Run not found");
+    if (run.status !== "running" && run.status !== "interrupted") return;
     const child = this.active.get(id);
-    if (!child) throw new Error("No owned process is available to stop");
+    if (!child) {
+      if (run.status === "running") {
+        // No process is owned for this run, so settle it instead of leaving the workspace falsely locked.
+        this.store.finishRun(id, "interrupted", null);
+      }
+      return;
+    }
     this.stopping.add(id);
     try {
       if (process.platform === "win32" && child.pid) {

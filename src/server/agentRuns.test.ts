@@ -39,7 +39,7 @@ function setup() {
 describe("agent runs", () => {
   it("frames split output, captures native identity, and preserves separate follow-up attempts", async () => {
     const { store, task, child, spawn, service } = setup();
-    store.updateTask(task.id, { context: "Check routes", draft: "next instruction" });
+    store.updateTask(task.id, { context: "Check routes", draft: "next instruction", expectedUpdatedAt: task.updatedAt });
     const id = await service.start(task.id, { model: "chosen-model" });
     expect(store.getRun(id)?.task).toBe(spawn.mock.calls[0][0].task);
     expect(store.getRun(id)?.task).toContain("Verify http://localhost:9999");
@@ -77,7 +77,7 @@ describe("agent runs", () => {
 
   it("preserves launch errors and retains a draft", async () => {
     const { store, task, spawn, service } = setup();
-    store.updateTask(task.id, { draft: "keep me" });
+    store.updateTask(task.id, { draft: "keep me", expectedUpdatedAt: task.updatedAt });
     spawn.mockImplementation(() => { throw new Error("executable missing"); });
     await expect(service.start(task.id)).rejects.toThrow("executable missing");
     const run = store.listRuns(task.id)[0];
@@ -303,5 +303,12 @@ describe("agent runs", () => {
     expect(run.onyxProvenance).toBe("onyx");
     expect(run.onyxContextSha).toMatch(/^[0-9a-f]{64}$/);
     child.emit("close", 0);
+  });
+  it("settles a running run that owns no process instead of leaving the workspace locked", async () => {
+    const { store, task, service } = setup();
+    const orphan = store.createRun(task.id, "prompt", undefined, "opencode");
+    await service.stop(orphan.id);
+    expect(store.getRun(orphan.id)?.status).toBe("interrupted");
+    expect(() => store.createRun(task.id, "another")).toThrow("interrupted");
   });
 });

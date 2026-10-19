@@ -154,4 +154,49 @@ describe("TaskDetail outgoing context preview", () => {
     await renderDetail();
     expect(document.body.textContent).toContain("No profile context");
   });
+
+  it("sends the rendered revision so a stale form cannot overwrite newer state", async () => {
+    await renderDetail();
+    const titleInput = [...document.querySelectorAll("input")].find((element) => element.value === "Demo");
+    if (!(titleInput instanceof HTMLInputElement)) throw new Error("Title input is missing");
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      setter.call(titleInput, "Renamed");
+      titleInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await flush();
+    await clickButton("Save changes");
+    expect(mocks.saveTask).toHaveBeenCalledWith("task-1", expect.objectContaining({
+      title: "Renamed", expectedRevision: 1, expectedUpdatedAt: 1,
+    }));
+  });
+
+  it("surfaces a stale-form rejection instead of silently overwriting", async () => {
+    mocks.saveTask.mockRejectedValueOnce(new Error("This task changed after the form was loaded (server revision 2, form revision 1). Reload and reapply your changes."));
+    await renderDetail();
+    const titleInput = [...document.querySelectorAll("input")].find((element) => element.value === "Demo");
+    if (!(titleInput instanceof HTMLInputElement)) throw new Error("Title input is missing");
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      setter.call(titleInput, "Renamed");
+      titleInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await flush();
+    await clickButton("Save changes");
+    expect(document.body.textContent).toContain("changed after the form was loaded");
+  });
+
+  it("flags the conflict and keeps the local draft when the server advances", async () => {
+    localStorage.setItem("saber.task.task-1", JSON.stringify({
+      fields: { title: "Local edit", spec: "Do work", criteria: "AC-01: done", context: "checkpoint", draft: "" },
+      baseRevision: 1, baseUpdatedAt: 1,
+    }));
+    await renderDetail();
+    const recovered = [...document.querySelectorAll("input")].find((element) => element.value === "Local edit");
+    if (!(recovered instanceof HTMLInputElement)) throw new Error("Recovered draft was not applied");
+    await act(async () => { root.render(createElement(TaskDetail, { task: { ...task, revision: 2, updatedAt: 99 }, onSaved: () => {} })); });
+    await flush();
+    expect(document.body.textContent).toContain("This task changed on the server");
+    expect(localStorage.getItem("saber.task.task-1")).not.toBeNull();
+  });
 });

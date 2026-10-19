@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { acknowledgeRun, launchTask, listTaskRuns, previewTaskScope, saveTask, stopSession, listProviders } from "../lib/api";
 import { runStatusLabel, providerLabels, type ProviderId, type ProviderStatus, type ScopePreview, type TaskRecord, type RunRecord } from "../lib/tasks";
 import { SessionPane } from "./SessionPane";
@@ -14,6 +14,10 @@ const fields = (task: TaskRecord) => ({ title: task.title, spec: task.spec, crit
 export function TaskDetail({ task, onSaved }: { task: TaskRecord; onSaved: (task: TaskRecord) => void }) {
   const [form, setForm] = useState(() => fields(task));
   const [saved, setSaved] = useState(() => fields(task));
+  const [base, setBase] = useState(() => ({ revision: task.revision, updatedAt: task.updatedAt }));
+  const [conflict, setConflict] = useState(false);
+  const taskRef = useRef(task);
+  taskRef.current = task;
   const [runs, setRuns] = useState<RunRecord[]>([]);
   const [runId, setRunId] = useState<string | null>(null);
   const [model, setModel] = useState("");
@@ -59,10 +63,33 @@ export function TaskDetail({ task, onSaved }: { task: TaskRecord; onSaved: (task
   }, [task.id]);
 
   useEffect(() => {
+    // Read the draft once per task, against the task as it is when that task is opened. Later
+    // server bumps must not delete a draft the user is still editing.
+    const current = taskRef.current;
     try {
       const recovery = JSON.parse(localStorage.getItem(storageKey) ?? "null");
-      if (recovery && Object.keys(fields(task)).every((key) => typeof recovery[key] === "string")) setForm(recovery);
+      const recovered = recovery?.fields ?? recovery;
+      const complete = recovered && Object.keys(fields(current)).every((key) => typeof recovered[key] === "string");
+      const sameBase = recovery?.baseRevision === current.revision && recovery?.baseUpdatedAt === current.updatedAt;
+      if (complete && sameBase) setForm(recovered);
+      else if (complete) localStorage.removeItem(storageKey);
     } catch {}
+  }, [storageKey]);
+
+  useEffect(() => {
+    if (task.revision === base.revision && task.updatedAt === base.updatedAt) return;
+    if (dirty) {
+      setConflict(true);
+      return;
+    }
+    const next = fields(task);
+    setForm(next);
+    setSaved(next);
+    setBase({ revision: task.revision, updatedAt: task.updatedAt });
+    setConflict(false);
+  }, [task, dirty, base.revision, base.updatedAt]);
+
+  useEffect(() => {
     let cancelled = false;
     const refresh = () => listTaskRuns(task.id).then((items) => {
       if (!cancelled) { setRuns(items); setRunId((old) => old ?? items[0]?.id ?? null); }
@@ -70,18 +97,29 @@ export function TaskDetail({ task, onSaved }: { task: TaskRecord; onSaved: (task
     void refresh();
     const timer = setInterval(refresh, 1500);
     return () => { cancelled = true; clearInterval(timer); };
-  }, [task.id, storageKey]);
+  }, [task.id]);
 
   function edit(key: keyof typeof form, value: string) {
     const next = { ...form, [key]: value };
     setForm(next); setMessage("");
-    try { localStorage.setItem(storageKey, JSON.stringify(next)); }
+    try { localStorage.setItem(storageKey, JSON.stringify({ fields: next, baseRevision: base.revision, baseUpdatedAt: base.updatedAt })); }
     catch { setError("Local recovery is unavailable. Save changes before switching tasks."); }
   }
 
+  function reloadFromServer() {
+    const next = fields(task);
+    setForm(next); setSaved(next);
+    setBase({ revision: task.revision, updatedAt: task.updatedAt });
+    setConflict(false); setMessage(""); setError("");
+    try { localStorage.removeItem(storageKey); } catch {}
+  }
+
   async function save() {
-    const result = await saveTask(task.id, form);
-    setSaved(fields(result)); onSaved(result);
+    const result = await saveTask(task.id, { ...form, expectedRevision: base.revision, expectedUpdatedAt: base.updatedAt });
+    setSaved(fields(result));
+    setBase({ revision: result.revision, updatedAt: result.updatedAt });
+    setConflict(false);
+    onSaved(result);
     try { localStorage.removeItem(storageKey); } catch {}
     return result;
   }
@@ -116,6 +154,10 @@ export function TaskDetail({ task, onSaved }: { task: TaskRecord; onSaved: (task
     </div>
     {error && <p role="alert" className="text-sm text-err">{error}</p>}
     {message && <p role="status" className="text-xs text-muted">{message}</p>}
+    {conflict && <div role="alert" className="flex flex-wrap items-center gap-2 rounded border border-line p-2 text-xs text-err">
+      This task changed on the server. Your unsaved edits were kept, but saving them would overwrite newer state.
+      <button onClick={reloadFromServer} className="rounded border border-line px-2 py-1 text-xs">Discard local changes and reload</button>
+    </div>}
     {dirty && <p className="text-xs text-muted">Unsaved edits restored locally. Save to update the task.</p>}
     <WorkspacePanel task={task} locked={busy || active || interrupted.length > 0} onSaved={onSaved} onBusyChange={setWorkspaceBusy} />
     <ProjectProfilePanel projectRoot={task.project} />
@@ -137,8 +179,8 @@ export function TaskDetail({ task, onSaved }: { task: TaskRecord; onSaved: (task
           try { localStorage.setItem(`saber.provider.${task.id}`, next); } catch {}
         }} className={inputClass}>{Object.entries(providerLabels).map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>
         <label className="min-w-40 flex-1 text-xs text-muted">Model (optional)<input value={model} onChange={(e) => setModel(e.target.value)} placeholder={`${providerLabels[provider]} default`} className={inputClass} /></label>
-        <button disabled={unavailable || workspaceUnavailable || active || interrupted.length > 0} onClick={() => void action(() => launch())} className="rounded bg-accent px-3 py-2 text-sm font-semibold text-black disabled:opacity-40">{latest ? "New run" : "Run specification"}</button>
-        {runs.some((run) => run.provider === provider && run.nativeSessionId && run.project === executionPath) && <button disabled={unavailable || workspaceUnavailable || active || interrupted.length > 0 || !form.draft.trim()} onClick={() => void action(() => launch(true))} className="rounded border border-line px-3 py-2 text-sm disabled:opacity-40">Send follow-up</button>}
+        <button disabled={unavailable || workspaceUnavailable || active || interrupted.length > 0 || conflict} onClick={() => void action(() => launch())} className="rounded bg-accent px-3 py-2 text-sm font-semibold text-black disabled:opacity-40">{latest ? "New run" : "Run specification"}</button>
+        {runs.some((run) => run.provider === provider && run.nativeSessionId && run.project === executionPath) && <button disabled={unavailable || workspaceUnavailable || active || interrupted.length > 0 || conflict || !form.draft.trim()} onClick={() => void action(() => launch(true))} className="rounded border border-line px-3 py-2 text-sm disabled:opacity-40">Send follow-up</button>}
         {active && <button onClick={() => void action(async () => { await stopSession(runs.find((run) => run.status === "running")!.id); setRuns(await listTaskRuns(task.id)); })} className="rounded border border-line px-3 py-2 text-sm">Stop run</button>}
       </div>
       <div className="flex flex-wrap items-center gap-2 text-xs text-muted"><span>{checking ? "Checking providers..." : readiness?.message ?? "Provider status unavailable."}</span><button disabled={checking} onClick={() => void refreshProviders()} className="underline disabled:opacity-40">Refresh providers</button>{capability && <span aria-label="Provider context capability">· {capability}</span>}</div>
