@@ -11,8 +11,20 @@ import { createVerificationRecord, summarizeVerification } from "./lib/verificat
 import type { TaskInput, TaskPatch, ProviderId, ScopePreview } from "./lib/tasks";
 import { providerStatus } from "./server/providers/executables";
 import { reloadProjects } from "./server/projects";
-import { startDevServer, listDevServers, stopDevServer } from "./server/devServers";
-import { goto as browserGoto, screenshot as browserShot, act as browserAct, currentUrl } from "./server/browser";
+import {
+  startDevServer,
+  listDevServers,
+  stopDevServer,
+  reconcileDevServers,
+  stopAllDevServers,
+} from "./server/devServers";
+import {
+  goto as browserGoto,
+  screenshot as browserShot,
+  act as browserAct,
+  currentUrl,
+  shutdown as browserShutdown,
+} from "./server/browser";
 import { handleApiV1 } from "./server/apiV1";
 import { ProjectProfiles } from "./server/projectProfiles";
 import { getSpecialistTeams } from "./server/specialistTeams";
@@ -87,6 +99,68 @@ export default {
     }
   },
 };
+
+// The server process owns the dev-server children and the verification browser, so
+// both are torn down here: stop dev servers, then the browser, as the spec orders it.
+interface ShutdownDeps {
+  reconcile(): string[];
+  stopAll(): Promise<void>;
+  shutdownBrowser(): Promise<void>;
+}
+
+const defaultShutdownDeps: ShutdownDeps = {
+  reconcile: reconcileDevServers,
+  stopAll: stopAllDevServers,
+  shutdownBrowser: browserShutdown,
+};
+
+let shutdownOnce: Promise<void> | undefined;
+
+async function runShutdown(deps: ShutdownDeps): Promise<void> {
+  try {
+    deps.reconcile();
+  } catch (error) {
+    console.error(describeError(error));
+  }
+  try {
+    await deps.stopAll();
+  } catch (error) {
+    console.error(describeError(error));
+  }
+  try {
+    await deps.shutdownBrowser();
+  } catch (error) {
+    console.error(describeError(error));
+  }
+}
+
+export function shutdownResources(deps: ShutdownDeps = defaultShutdownDeps): Promise<void> {
+  if (deps !== defaultShutdownDeps) return runShutdown(deps);
+  // Deduplicate concurrent shutdowns, but let a later one run again: a dev server
+  // started after an earlier shutdown must still be stopped by the next one.
+  shutdownOnce ??= runShutdown(deps).finally(() => {
+    shutdownOnce = undefined;
+  });
+  return shutdownOnce;
+}
+
+const shutdownRegistry = globalThis as typeof globalThis & { saberShutdownHooked?: boolean };
+
+export function registerShutdownHooks(): void {
+  // Node re-evaluates this entry on dev reloads, so the guard lives on globalThis.
+  if (shutdownRegistry.saberShutdownHooked) return;
+  shutdownRegistry.saberShutdownHooked = true;
+  const handle = () => {
+    void shutdownResources().finally(() => {
+      // Installing a listener replaces the default terminate, so exit explicitly.
+      process.exit(0);
+    });
+  };
+  process.once("SIGINT", handle);
+  process.once("SIGTERM", handle);
+}
+
+registerShutdownHooks();
 
 async function handleApi(request: Request): Promise<Response | null> {
   const url = new URL(request.url);
@@ -506,14 +580,19 @@ async function handleApi(request: Request): Promise<Response | null> {
   }
 
   if (path === "/api/dev-servers/stop" && request.method === "POST") {
+    let project: unknown;
     try {
-      const body = JSON.parse(await request.text()) as { project?: unknown };
-      if (typeof body.project === "string" && stopDevServer(body.project)) {
-        return jsonResponse({ ok: true });
-      }
-      return jsonResponse({ error: "not running" }, 404);
+      project = (JSON.parse(await request.text()) as { project?: unknown }).project;
     } catch {
       return jsonResponse({ error: "Invalid JSON" }, 400);
+    }
+    if (typeof project !== "string") return jsonResponse({ error: "project is required" }, 400);
+    try {
+      // Stop is idempotent: unknown or already-stopped projects are success, not 404.
+      await stopDevServer(project);
+      return jsonResponse({ ok: true });
+    } catch (error) {
+      return errorResponse(error, 500);
     }
   }
 
