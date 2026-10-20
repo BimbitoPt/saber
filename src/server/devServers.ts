@@ -229,7 +229,15 @@ export class DevServerManager {
     }
     // A start that has not registered its entry yet must finish before it can be stopped.
     const pending = this.starting.get(name);
-    if (pending) await pending.catch(() => {});
+    if (pending) {
+      await pending.catch(() => {});
+      // Another stop may have claimed the name while this one waited for the start.
+      const claimed = this.stopping.get(name);
+      if (claimed) {
+        await claimed;
+        return true;
+      }
+    }
 
     const entry = this.entries.get(name);
     if (!entry) return true;
@@ -245,6 +253,9 @@ export class DevServerManager {
   }
 
   async stopAll(): Promise<void> {
+    // A start still allocating is not in `entries` yet, so waiting for it first is the
+    // only way shutdown cannot leave a child spawned after the snapshot.
+    await Promise.all([...this.starting.values()].map((task) => task.catch(() => {})));
     await Promise.all([...this.entries.keys()].map((name) => this.stop(name)));
   }
 

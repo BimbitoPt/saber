@@ -114,6 +114,8 @@ describe("dev server lifecycle", () => {
 
     // The survivor still owns 8090, so another project must not be handed it, and a
     // restart of the same name must wait rather than spawn a twin.
+    // Its port answering nothing is the point: liveness, not the probe, must reserve it.
+    stuck.serving.delete(DEV_PORT_MIN);
     expect((await stuck.manager.start("beta")).port).not.toBe(DEV_PORT_MIN);
     await expect(stuck.manager.start("alpha")).rejects.toThrow("still shutting down");
     // Reconcile must not drop a survivor while its process is still alive.
@@ -210,9 +212,10 @@ describe("dev server lifecycle", () => {
     for (let port = DEV_PORT_MIN; port <= DEV_PORT_MIN + 9; port++) h.serving.add(port);
     await expect(h.manager.start("alpha")).rejects.toThrow(`no free dev port in ${DEV_PORT_MIN}-${DEV_PORT_MIN + 9}`);
 
-    // A failed allocation must not leak the ports it reserved while probing.
-    h.serving.delete(DEV_PORT_MIN + 4);
-    expect((await h.manager.start("alpha")).port).toBe(DEV_PORT_MIN + 4);
+    // A failed allocation must not leak the ports it reserved while probing: the
+    // first candidate is free again, so it must be the one handed out.
+    h.serving.delete(DEV_PORT_MIN);
+    expect((await h.manager.start("alpha")).port).toBe(DEV_PORT_MIN);
   });
 
   it("PROC-03 stopAll still terminates a process that survived an earlier stop", async () => {
@@ -229,8 +232,22 @@ describe("dev server lifecycle", () => {
     });
     await h.manager.stopAll();
 
+    // The survivor had to be killed again, not merely forgotten from the map.
+    expect(h.killTree).toHaveBeenCalledTimes(2);
+    expect(h.alive.size).toBe(0);
     expect(h.manager.list()).toEqual([]);
     expect(h.manager.getEntry("alpha")).toBeUndefined();
+  });
+
+  it("PROC-03 stopAll waits for an in-flight start and stops it", async () => {
+    const h = harness({ waitUpMs: 1_000 });
+
+    const starting = h.manager.start("alpha");
+    await h.manager.stopAll();
+    await starting;
+
+    expect(h.alive.size).toBe(0);
+    expect(h.manager.list()).toEqual([]);
   });
 
   it("PROC-03 gives concurrent starts distinct ports and one process per name", async () => {
@@ -242,11 +259,12 @@ describe("dev server lifecycle", () => {
     await h.manager.settle("alpha");
     await h.manager.settle("beta");
 
-    // A name that is already starting must not spawn a twin.
+    // A dead name restarted twice at once must spawn one process, not a twin.
+    h.children[0].emit("exit", 0, null);
+    h.serving.delete(alpha.port);
     const [first, second] = await Promise.all([h.manager.start("alpha"), h.manager.start("alpha")]);
-    expect(first.port).toBe(alpha.port);
-    expect(second.port).toBe(alpha.port);
-    expect(h.spawnServer).toHaveBeenCalledTimes(2);
+    expect(first.port).toBe(second.port);
+    expect(h.spawnServer).toHaveBeenCalledTimes(3);
   });
 
   it("resolves the Bun binary instead of the bundled Node that runs the packaged server", () => {

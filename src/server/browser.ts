@@ -54,6 +54,7 @@ export class BrowserSession {
   }
 
   ensurePage(): Promise<BrowserPage> {
+    if (this.closing) return Promise.reject(new Error("browser session is shutting down"));
     const existing = this.page;
     if (existing && this.browser && !existing.isClosed()) return Promise.resolve(existing);
     if (!this.launching) {
