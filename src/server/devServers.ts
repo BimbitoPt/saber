@@ -253,8 +253,9 @@ export class DevServerManager {
     const dropped: string[] = [];
     for (const [name, entry] of [...this.entries]) {
       const pid = entry.proc?.pid;
-      const dead = entry.state === "exited" || entry.state === "failed" || !pid || !this.deps.isAlive(pid);
-      if (!dead) continue;
+      // Liveness only, never the reported state: a `failed` entry whose process survived
+      // a stop still owns its port until the process is really gone.
+      if (typeof pid === "number" && this.deps.isAlive(pid)) continue;
       this.entries.delete(name);
       dropped.push(name);
     }
@@ -312,9 +313,9 @@ export class DevServerManager {
 
   /** Unexpected exits must land on a terminal state so the reported status can never stay `up`. */
   private settleDeath(entry: Entry, state: "exited" | "failed"): void {
-    // First death wins: an `error` followed by `exit` must keep the `failed` reason.
-    if (entry.state === "exited" || entry.state === "failed") return;
-    entry.state = state;
+    // First death wins for the reason, but the handle is always released: a survivor
+    // marked `failed` by a timed-out stop must still forget its handle when it exits.
+    if (entry.state !== "exited" && entry.state !== "failed") entry.state = state;
     entry.proc = null;
   }
 
@@ -333,7 +334,9 @@ export class DevServerManager {
 
   private async terminate(name: string, entry: Entry): Promise<void> {
     const pid = entry.proc?.pid;
-    if (entry.state === "exited" || entry.state === "failed" || !pid) {
+    // Nothing to kill only when there is no handle or its process is already gone. The
+    // entry's state cannot decide this: a `failed` entry may be a survivor of a stop.
+    if (typeof pid !== "number" || !this.deps.isAlive(pid)) {
       entry.proc = null;
       this.forget(name, entry);
       return;

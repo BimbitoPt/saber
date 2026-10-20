@@ -116,6 +116,8 @@ describe("dev server lifecycle", () => {
     // restart of the same name must wait rather than spawn a twin.
     expect((await stuck.manager.start("beta")).port).not.toBe(DEV_PORT_MIN);
     await expect(stuck.manager.start("alpha")).rejects.toThrow("still shutting down");
+    // Reconcile must not drop a survivor while its process is still alive.
+    expect(stuck.manager.reconcile()).toEqual([]);
 
     // Once the process is really gone, reconcile drops the entry and frees the port.
     stuck.alive.delete(100);
@@ -207,6 +209,28 @@ describe("dev server lifecycle", () => {
 
     for (let port = DEV_PORT_MIN; port <= DEV_PORT_MIN + 9; port++) h.serving.add(port);
     await expect(h.manager.start("alpha")).rejects.toThrow(`no free dev port in ${DEV_PORT_MIN}-${DEV_PORT_MIN + 9}`);
+
+    // A failed allocation must not leak the ports it reserved while probing.
+    h.serving.delete(DEV_PORT_MIN + 4);
+    expect((await h.manager.start("alpha")).port).toBe(DEV_PORT_MIN + 4);
+  });
+
+  it("PROC-03 stopAll still terminates a process that survived an earlier stop", async () => {
+    const h = harness({ waitUpMs: 1_000, stopTimeoutMs: 10 });
+    await h.manager.start("alpha");
+    await h.manager.settle("alpha");
+    h.killTree.mockImplementation(() => new Promise<void>(() => {}));
+
+    await h.manager.stop("alpha");
+    expect(h.manager.getEntry("alpha")?.state).toBe("failed");
+
+    h.killTree.mockImplementation(async (pid: number) => {
+      h.alive.delete(pid);
+    });
+    await h.manager.stopAll();
+
+    expect(h.manager.list()).toEqual([]);
+    expect(h.manager.getEntry("alpha")).toBeUndefined();
   });
 
   it("PROC-03 gives concurrent starts distinct ports and one process per name", async () => {

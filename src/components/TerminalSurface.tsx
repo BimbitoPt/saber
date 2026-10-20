@@ -105,9 +105,12 @@ export function TerminalSurface({ task, session, active, startOnOpen, onSessionC
       })();
       const record = { id, promise };
       stopping = record;
-      void promise.finally(() => {
+      // `then(clear, clear)`: a rejection must clear the latch, not surface as an
+      // unhandled rejection while a second stop waits on a stale record.
+      const clear = () => {
         if (stopping === record) stopping = undefined;
-      });
+      };
+      void promise.then(clear, clear);
       return promise;
     };
 
