@@ -51,14 +51,14 @@ No data changes. No new state, timers, or processes: the split is structural. `r
 
 ## Completion evidence
 
-Date: 2026-10-20. Gates: `bun run test` 30 files / 228 passed / 1 skipped; `bunx tsc --noEmit` exit 0; `bun run build` exit 0; `bun run scripts/verify-terminal.ts` (10 Rust tests, 24 TS tests) exit 0. `src/server.ts` went from 661 lines to 49.
+Date: 2026-10-20. Gates: `bun run test` 30 files / 229 passed / 1 skipped; `bunx tsc --noEmit` exit 0; `bun run build` exit 0; `bun run scripts/verify-terminal.ts` (10 Rust tests, 24 TS tests) exit 0. `src/server.ts` went from 661 lines to 49.
 
 - MOD-01..02: `src/server/http.ts` (20 lines) holds `jsonResponse`, `errorResponse`, and `routeError` (the old `profileError`, same regular expressions and same `console.error(describeError(...))` side effect); `routes/types.ts` (7) holds `RouteContext` and `RouteHandler`. The suite asserts content type, `cache-control: no-store`, the JSON body, and one mapped status per error class.
 - MOD-03..08: `routes/tasks.ts` (152), `routes/terminals.ts` (53), `routes/sessions.ts` (126), `routes/projects.ts` (91), `routes/roles.ts` (64), `routes/environment.ts` (81), plus `routes/shared.ts` (12) for `resolveWorkdir`. Each is a byte-identical move of its blocks: the route set is exactly 22 static method+path pairs on 18 distinct paths and 17 `RegExp` matchers, each appearing once. `routes/environment.ts` keeps the dev-server stop route's idempotent 200 from the previous slice.
 - MOD-09: `routes/index.ts` (31 lines) gates on `/api/`, runs the modules in the original single-file order, and returns the original `{ error: "not found" }` 404 when no module claims the path. The suite proves the chain reaches the last module (`/api/dev-servers` 200) and that a non-API path is `null`.
 - MOD-10: `server/shutdown.ts` (63 lines) is an unchanged move; `src/server.ts` re-exports `shutdownResources` so `browser.test.ts` needed no edit.
 - MOD-11: `src/server.ts` is 49 lines (was 661) and keeps only the error-capture import, the TanStack Start entry lookup, the `fetch` export, and the shutdown registration.
-- MOD-12: `routes/routes.test.ts` (245 lines, 16 tests) drives `handleApi` with real `Request` objects against a temp `SABER_DATA_DIR` and asserts a status and a body for each group, including the 428/409 task preconditions, the 405 for a revisions `GET`, the 400 validation paths, and specific 404 bodies so a deleted route cannot hide behind the dispatcher fallback. `routes/routeScan.test.ts` (89 lines, 4 tests) asserts the golden route set against the module sources.
+- MOD-12: `routes/routes.test.ts` (16 tests) drives `handleApi` with real `Request` objects against a temp `SABER_DATA_DIR` and asserts a status and a body for each group, including the 428/409 task preconditions, the 405 for a revisions `GET`, the 400 validation paths, and specific 404 bodies so a deleted route cannot hide behind the dispatcher fallback. `routes/routeScan.test.ts` (5 tests) asserts the golden route set against the module sources, rejects a duplicate registration, and compares the committed route table to a fresh render.
 
 ## Review record
 
@@ -70,6 +70,11 @@ Fixed from review:
 - The route-set invariant was only a manual comparison; `routeScan.test.ts` now makes it a gate.
 - The providers test spawned real `opencode`/`codex`/`claude` auth checks (up to 8s each); `providerStatus` is mocked to keep the gate deterministic and the dispatcher suite at ~1.5s.
 - `RouteContext.method` was dead; removed. The suite also clears the specialist-teams singleton alongside the store so a future `isolate: false` run cannot reuse a closed database.
+
+A second, mutation-based review of that fix commit found two assertions that still did not bite, both now fixed and verified by mutating the source and restoring it:
+- The workspace assertion used an unknown task, so the route's `Task not found` guard answered before the method branch; deleting the GET line still passed. It now requests the workspace of the created task and expects 409 from the git service (deleting the GET line returns 405 and fails).
+- The duplicate check ran over the already-deduped list. It now runs over the raw extraction; duplicating the `/api/dev-servers` GET block fails with 40 vs 39.
+- The route table is now rendered by `renderRouteTable` in `routeScan.ts`, and a test compares the committed file to a fresh render, so the table cannot drift silently. Adding that comparison is what makes the "cannot silently drift" claim in the route-set invariant true.
 
 Decisions: module order is irrelevant while route sets are disjoint, so the original order was kept to make a future overlap obvious; a wrong-method request is still a 404 because no module claims it, exactly as the single file behaved; and the git/browser-backed handlers are exercised by their existing suites rather than the dispatcher suite, because reaching them would spawn real work.
 

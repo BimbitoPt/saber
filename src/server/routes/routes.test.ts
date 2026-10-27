@@ -133,6 +133,7 @@ describe("tasks routes", () => {
     const unknownWorkspace = await api("/api/tasks/missing/workspace");
     expect(unknownWorkspace?.status).toBe(404);
     expect((await json(unknownWorkspace)).error).toBe("Task not found");
+    expect((await api(`/api/tasks/${taskId}/workspace`))?.status).toBe(409);
     expect((await api(`/api/tasks/${taskId}/teams`))?.status).toBe(200);
 
     const terminals = await api(`/api/tasks/${taskId}/terminals`);

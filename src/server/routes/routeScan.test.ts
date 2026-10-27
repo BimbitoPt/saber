@@ -2,17 +2,19 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { dedupeRoutes, extractRoutes, type RouteSource } from "./routeScan";
+import { dedupeRoutes, extractRoutes, renderRouteTable, type RouteSource } from "./routeScan";
 
 const modules = ["tasks", "terminals", "sessions", "projects", "roles", "environment"];
 const here = dirname(fileURLToPath(import.meta.url));
+const repoRoot = join(here, "..", "..", "..");
 
 const sources: RouteSource[] = modules.map((name) => ({
   file: `src/server/routes/${name}.ts`,
   text: readFileSync(join(here, `${name}.ts`), "utf8"),
 }));
 
-const routes = dedupeRoutes(extractRoutes(sources));
+const extracted = extractRoutes(sources);
+const routes = dedupeRoutes(extracted);
 
 const EXPECTED_LITERALS = [
   "GET /api/browser/screenshot",
@@ -77,8 +79,13 @@ describe("route set", () => {
   });
 
   it("MOD-12 does not double-register a route", () => {
-    const keys = routes.map((route) => `${route.method} ${route.pattern}`);
+    const keys = extracted.map((route) => `${route.method} ${route.pattern}`);
     expect(keys.length).toBe(new Set(keys).size);
+  });
+
+  it("MOD-12 keeps the committed route table in sync with the modules", () => {
+    const committed = readFileSync(join(repoRoot, "docs", "architecture", "route-table.gen.md"), "utf8");
+    expect(committed.replace(/\r\n/g, "\n")).toBe(renderRouteTable(routes));
   });
 
   it("MOD-12 only scans route modules under /api/", () => {
