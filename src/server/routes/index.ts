@@ -22,7 +22,7 @@ export async function handleApi(request: Request): Promise<Response | null> {
   const url = new URL(request.url);
   const path = url.pathname;
   if (!path.startsWith("/api/")) return null;
-  const ctx = { request, url, path, method: request.method };
+  const ctx = { request, url, path };
   for (const handler of handlers) {
     const response = await handler(ctx);
     if (response) return response;

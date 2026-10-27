@@ -1,10 +1,18 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TaskStore } from "../taskStore";
 
-const runtime = globalThis as typeof globalThis & { saberTaskStore?: TaskStore };
+vi.mock("../providers/executables", async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>();
+  return {
+    ...actual,
+    providerStatus: async (id: string) => ({ id, installed: true, auth: "ok", message: "" }),
+  };
+});
+
+const runtime = globalThis as typeof globalThis & { saberTaskStore?: TaskStore; saberSpecialistTeams?: unknown };
 const previousDataDir = process.env.SABER_DATA_DIR;
 let directory: string;
 let handleApi: (request: Request) => Promise<Response | null>;
@@ -31,6 +39,7 @@ beforeAll(async () => {
 afterAll(() => {
   runtime.saberTaskStore?.close();
   runtime.saberTaskStore = undefined;
+  runtime.saberSpecialistTeams = undefined;
   if (previousDataDir === undefined) delete process.env.SABER_DATA_DIR;
   else process.env.SABER_DATA_DIR = previousDataDir;
   rmSync(directory, { recursive: true, force: true });
@@ -44,6 +53,7 @@ describe("api dispatcher", () => {
     const missing = await api("/api/nothing-here");
     expect(missing?.status).toBe(404);
     expect(missing?.headers.get("content-type")).toContain("application/json");
+    expect(missing?.headers.get("cache-control")).toBe("no-store");
     expect(await json(missing)).toEqual({ error: "not found" });
   });
 
@@ -118,8 +128,11 @@ describe("tasks routes", () => {
     const summary = await json(verifications);
     expect(summary.records).toEqual([]);
     expect(summary.summary).toBeTruthy();
+    expect((await post(`/api/tasks/${taskId}/verifications`, {}))?.status).toBe(400);
 
-    expect((await api("/api/tasks/missing/workspace"))?.status).toBe(404);
+    const unknownWorkspace = await api("/api/tasks/missing/workspace");
+    expect(unknownWorkspace?.status).toBe(404);
+    expect((await json(unknownWorkspace)).error).toBe("Task not found");
     expect((await api(`/api/tasks/${taskId}/teams`))?.status).toBe(200);
 
     const terminals = await api(`/api/tasks/${taskId}/terminals`);
@@ -141,7 +154,9 @@ describe("terminal routes", () => {
 
     expect((await post("/api/terminals/reconcile", { liveSessionIds: [] }))?.status).toBe(200);
     expect((await post("/api/terminals/reconcile", {}))?.status).toBe(400);
-    expect((await api("/api/terminals/missing", { method: "DELETE" }))?.status).toBe(404);
+    const missing = await api("/api/terminals/missing", { method: "DELETE" });
+    expect(missing?.status).toBe(404);
+    expect((await json(missing)).error).toBe("Terminal session not found");
     expect((await post("/api/terminals/missing/running", {}))?.status).toBe(409);
     expect((await post("/api/terminals/missing/recover", { confirmedStopped: true }))?.status).toBe(409);
   });
@@ -164,7 +179,9 @@ describe("session routes", () => {
     expect((await api("/api/sessions", { method: "POST", body: "{" }))?.status).toBe(400);
     expect((await post("/api/sessions", {}))?.status).toBe(400);
     expect((await post("/api/sessions/missing/stop", {}))?.status).toBe(404);
-    expect((await post("/api/sessions/missing/followup", { task: "keep going" }))?.status).toBe(404);
+    const followup = await post("/api/sessions/missing/followup", {});
+    expect(followup?.status).toBe(400);
+    expect((await json(followup)).error).toBe("task is required");
   });
 });
 
@@ -183,11 +200,13 @@ describe("project routes", () => {
     expect((await api("/api/project-profiles"))?.status).toBe(400);
     expect((await post("/api/project-profiles/drafts", {}))?.status).toBe(400);
     expect((await post("/api/project-profiles/refresh", {}))?.status).toBe(400);
-    expect((await post("/api/project-revisions/missing/discard", {}))?.status).toBe(404);
   });
 
   it("MOD-06 reaches project revisions without a handler for GET", async () => {
     expect((await api("/api/project-revisions/missing"))?.status).toBe(405);
+    const discarded = await post("/api/project-revisions/missing/discard", {});
+    expect(discarded?.status).toBe(404);
+    expect((await json(discarded)).error).toBe("Request could not be completed");
   });
 });
 
