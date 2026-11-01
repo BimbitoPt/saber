@@ -395,5 +395,5 @@ flowchart TB
 - Bun server: docs/architecture/zoom-server.md
 - Frontend: docs/architecture/zoom-frontend.md
 - Providers: docs/architecture/zoom-providers.md
-- Generated route table: scripts/generate-route-table.ts emits docs/architecture/route-table.gen.md once fix 1 lands
+- Generated route table: scripts/generate-route-table.ts emits docs/architecture/route-table.gen.md from src/server/routes/*.ts; `src/server/routes/routeScan.test.ts` fails if the scanned route set drifts
 

@@ -10,3 +10,4 @@ src-tauri/binaries/node-*
 src-tauri/resources/saber-server/
 src-tauri/target/
 src-tauri/gen/schemas/linux-schema.json
+/redteam-scratch/
