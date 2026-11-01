@@ -1,6 +1,6 @@
 # 🪄 Saber — Terminal-First Workspace for Agentic Engineering
 
-![Saber Banner](https://raw.githubusercontent.com/BimbitoPt/saber/main/docs/assets/saber-banner.svg "Saber Banner")
+![Saber Banner](https://raw.githubusercontent.com/BimbitoPt/saber/master/docs/assets/saber-banner.svg "Saber Banner")
 
 [![TypeScript](https://img.shields.io/badge/TypeScript-Ready-blue)](https://www.typescriptlang.org/)
 [![Bun](https://img.shields.io/badge/Bun-Runtime-orange)](https://bun.sh/)
