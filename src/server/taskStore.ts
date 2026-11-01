@@ -38,8 +38,29 @@ function nextUpdatedAt(task: { updatedAt: number }) {
   return Math.max(Date.now(), task.updatedAt + 1);
 }
 
+/** Threshold (ms) above which a SQL query is logged as slow. Override with SABER_SQL_SLOW_MS. */
+const slowQueryMs = Number(process.env.SABER_SQL_SLOW_MS ?? "5");
+
+/**
+ * Wraps a synchronous DB call and logs a warning if it exceeds `slowQueryMs`.
+ * Used to surface hot SQLite paths without adding async overhead.
+ */
+function measureSql<T>(label: string, fn: () => T): T {
+  const start = process.hrtime.bigint();
+  try {
+    return fn();
+  } finally {
+    const ms = Number(process.hrtime.bigint() - start) / 1_000_000;
+    if (ms > slowQueryMs) {
+      console.warn(`[saber-sql] ${label} took ${ms.toFixed(1)}ms`);
+    }
+  }
+}
+
 export class TaskStore {
   private db: DatabaseSync;
+  private pendingEvents = new Map<string, { lines: string[]; run: RunRecord }>();
+  private flushTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(path: string) {
     if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
@@ -91,21 +112,54 @@ export class TaskStore {
     }
   }
 
-  close() { this.db.close(); }
+  close() {
+    this.flushPendingEvents();
+    this.db.close();
+  }
 
   private decode<T>(row: unknown): T | undefined {
     return row ? JSON.parse((row as { data: string }).data) as T : undefined;
   }
 
   getTask(id: string) {
-    return this.decode<TaskRecord>(this.db.prepare("SELECT data FROM tasks WHERE id = ?").get(id));
+    return measureSql(`getTask(${id})`, () =>
+      this.decode<TaskRecord>(this.db.prepare("SELECT data FROM tasks WHERE id = ?").get(id)),
+    );
   }
 
   listTasks(): TaskSummary[] {
-    return this.db.prepare("SELECT data FROM tasks").all()
-      .map((row) => this.decode<TaskRecord>(row)!)
-      .map((task) => ({ ...task, latestRun: this.listRuns(task.id)[0], verificationSummary: summarizeVerification(task.criteria, task.revision, this.listVerifications(task.id)) }))
-      .sort((a, b) => b.createdAt - a.createdAt);
+    return measureSql("listTasks()", () => {
+      const tasks = this.db.prepare("SELECT data FROM tasks").all()
+        .map((row) => this.decode<TaskRecord>(row)!);
+
+      // Eliminate N+1: fetch all runs once, group by task_id in memory.
+      const allRuns = this.db.prepare("SELECT data FROM runs ORDER BY rowid DESC").all()
+        .map((row) => this.decode<RunRecord>(row)!);
+      const runsByTask = new Map<string, RunRecord[]>();
+      for (const run of allRuns) {
+        const existing = runsByTask.get(run.taskId) ?? [];
+        existing.push(run);
+        runsByTask.set(run.taskId, existing);
+      }
+
+      // Eliminate N+1: fetch all verifications once, group by task_id in memory.
+      const allVerifications = this.db.prepare("SELECT data FROM verifications ORDER BY rowid ASC").all()
+        .map((row) => this.decode<VerificationRecord>(row)!);
+      const verificationsByTask = new Map<string, VerificationRecord[]>();
+      for (const verification of allVerifications) {
+        const existing = verificationsByTask.get(verification.taskId) ?? [];
+        existing.push(verification);
+        verificationsByTask.set(verification.taskId, existing);
+      }
+
+      return tasks
+        .map((task) => ({
+          ...task,
+          latestRun: (runsByTask.get(task.id) ?? [])[0],
+          verificationSummary: summarizeVerification(task.criteria, task.revision, verificationsByTask.get(task.id) ?? []),
+        }))
+        .sort((a, b) => b.createdAt - a.createdAt);
+    });
   }
 
   createTask(input: TaskInput): TaskRecord {
@@ -146,8 +200,19 @@ export class TaskStore {
     return updated;
   }
 
+  /** Public read: flush pending events first so callers see the latest writes. */
   getRun(id: string) {
-    return this.decode<RunRecord>(this.db.prepare("SELECT data FROM runs WHERE id = ?").get(id));
+    this.flushPendingEvents();
+    return measureSql(`getRun(${id})`, () =>
+      this.decode<RunRecord>(this.db.prepare("SELECT data FROM runs WHERE id = ?").get(id)),
+    );
+  }
+
+  /** Internal read: does NOT flush. Used by write paths that must not clear the buffer. */
+  private getRunUnflushed(id: string) {
+    return measureSql(`getRun(${id})`, () =>
+      this.decode<RunRecord>(this.db.prepare("SELECT data FROM runs WHERE id = ?").get(id)),
+    );
   }
 
   listVerifications(taskId: string): VerificationRecord[] {
@@ -444,10 +509,12 @@ export class TaskStore {
   }
 
   listRuns(taskId?: string): RunRecord[] {
-    const rows = taskId
-      ? this.db.prepare("SELECT data FROM runs WHERE task_id = ? ORDER BY rowid DESC").all(taskId)
-      : this.db.prepare("SELECT data FROM runs ORDER BY rowid DESC").all();
-    return rows.map((row) => this.decode<RunRecord>(row)!);
+    return measureSql(`listRuns(${taskId ?? "all"})`, () => {
+      const rows = taskId
+        ? this.db.prepare("SELECT data FROM runs WHERE task_id = ? ORDER BY rowid DESC").all(taskId)
+        : this.db.prepare("SELECT data FROM runs ORDER BY rowid DESC").all();
+      return rows.map((row) => this.decode<RunRecord>(row)!);
+    });
   }
 
   createRun(taskId: string, prompt: string, model?: string, provider: ProviderId = "opencode", workdir?: string, capture: RunContextCapture = {}, runId?: string): RunRecord {
@@ -512,27 +579,83 @@ export class TaskStore {
     return updated;
   }
 
-  appendEvent(id: string, line: string) {
-    const run = this.getRun(id);
-    if (!run) throw new Error("Run not found");
+  /**
+   * Write all buffered PTY events to SQLite in a single transaction.
+   * Called on debounce timer, when the buffer reaches the size threshold,
+   * on read paths (for read-after-write consistency), and on close().
+   */
+  private flushPendingEvents() {
+    if (this.flushTimer) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
+    if (this.pendingEvents.size === 0) return;
+
     this.db.exec("BEGIN IMMEDIATE");
     try {
-      this.db.prepare("INSERT INTO events VALUES (?, ?, ?)").run(id, ++run.eventCount, line);
-      this.writeRun(run);
+      for (const [runId, { lines, run }] of this.pendingEvents) {
+        for (const line of lines) {
+          this.db.prepare("INSERT INTO events VALUES (?, ?, ?)").run(runId, ++run.eventCount, line);
+        }
+        this.writeRun(run);
+      }
       this.db.exec("COMMIT");
     } catch (error) {
       this.db.exec("ROLLBACK");
       throw error;
     }
+    this.pendingEvents.clear();
+  }
+
+  /** Flush any buffered events immediately. Call on shutdown to avoid data loss. */
+  flushEvents() {
+    this.flushPendingEvents();
+  }
+
+  /**
+   * Buffer a PTY output line instead of opening a transaction per line.
+   * Flushes immediately when the per-run buffer reaches 20 lines,
+   * or on a 50 ms debounce timer after the last write.
+   */
+  appendEvent(id: string, line: string) {
+    // Unflushed read: we must not clear the buffer we're about to write to.
+    const run = this.getRunUnflushed(id);
+    if (!run) throw new Error("Run not found");
+
+    const pending = this.pendingEvents.get(id);
+    if (pending) {
+      pending.lines.push(line);
+    } else {
+      this.pendingEvents.set(id, { lines: [line], run: { ...run } });
+    }
+
+    const pendingEntry = this.pendingEvents.get(id)!;
+    if (pendingEntry.lines.length >= 20) {
+      // Buffer is large: flush now, cancel the debounce timer.
+      if (this.flushTimer) {
+        clearTimeout(this.flushTimer);
+        this.flushTimer = null;
+      }
+      this.flushPendingEvents();
+      return;
+    }
+
+    // Debounce: flush after 50 ms of inactivity on this run.
+    if (!this.flushTimer) {
+      this.flushTimer = setTimeout(() => this.flushPendingEvents(), 50);
+    }
   }
 
   events(id: string, after: number, limit = 300) {
-    const run = this.getRun(id);
-    if (!run) throw new Error("Run not found");
-    const rows = this.db.prepare("SELECT seq, line FROM events WHERE run_id = ? AND seq > ? ORDER BY seq LIMIT ?")
-      .all(id, Math.max(0, after), Math.max(1, Math.min(limit, 300))) as unknown as Array<{ seq: number; line: string }>;
-    const next = rows.at(-1)?.seq ?? after;
-    return { status: run.status, next, lines: rows.map((row) => row.line), hasMore: next < run.eventCount };
+    this.flushPendingEvents();
+    return measureSql(`events(${id}, after=${after})`, () => {
+      const run = this.getRun(id);
+      if (!run) throw new Error("Run not found");
+      const rows = this.db.prepare("SELECT seq, line FROM events WHERE run_id = ? AND seq > ? ORDER BY seq LIMIT ?")
+        .all(id, Math.max(0, after), Math.max(1, Math.min(limit, 300))) as unknown as Array<{ seq: number; line: string }>;
+      const next = rows.at(-1)?.seq ?? after;
+      return { status: run.status, next, lines: rows.map((row) => row.line), hasMore: next < run.eventCount };
+    });
   }
 }
 

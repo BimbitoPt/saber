@@ -1,14 +1,31 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import os, { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn, execFileSync } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import { chromium, type Browser, type Page } from "playwright";
 import { checkSequenceIntegrity, memoryTrend, summarizeSamples } from "../src/lib/responsiveness.ts";
+import { commFromProcStat, prettyNameFromOsRelease, rssPagesFromProcStat, sumRssForComm } from "./bench-probes.ts";
+
+const headlessCommPrefix = "chrome-headless";
 
 const smoke = process.argv.includes("--smoke");
 const durationMs = smoke ? 8_000 : 10 * 60_000;
 const port = Number(process.env.SABER_BENCH_PORT ?? 8198);
+const platformHostInfo = () => {
+  if (process.platform === "win32") return {
+    os: execFileSync("powershell", ["-NoProfile", "-Command", "(Get-CimInstance Win32_OperatingSystem | Select-Object -ExpandProperty Caption) + ' ' + (Get-CimInstance Win32_OperatingSystem | Select-Object -ExpandProperty Version) + ' ' + $env:PROCESSOR_ARCHITECTURE"], { encoding: "utf8" }).trim(),
+    cpu: execFileSync("powershell", ["-NoProfile", "-Command", "(Get-CimInstance Win32_Processor | Select-Object -First 1 -ExpandProperty Name)"], { encoding: "utf8" }).trim(),
+    memoryBytes: Number(execFileSync("powershell", ["-NoProfile", "-Command", "(Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory"], { encoding: "utf8" }).trim()),
+  };
+  let distro = "";
+  try { distro = prettyNameFromOsRelease(readFileSync("/etc/os-release", "utf8")) ?? ""; } catch {}
+  return {
+    os: `linux ${os.release()} ${process.arch}${distro ? ` (${distro})` : ""}`,
+    cpu: os.cpus()[0]?.model ?? "unknown",
+    memoryBytes: os.totalmem(),
+  };
+};
 const root = mkdtempSync(join(tmpdir(), "saber-responsiveness-"));
 const dataDir = join(root, "data");
 let tasks: Array<{ id: string; title: string }> = [];
@@ -18,7 +35,7 @@ let browser: Browser | undefined;
 let page: Page | undefined;
 try {
   server = spawn(process.execPath, [join(process.cwd(), "node_modules/vite/bin/vite.js"), "dev", "--host", "127.0.0.1", "--port", String(port), "--strictPort"], {
-    cwd: process.cwd(), env: { ...process.env, SABER_DATA_DIR: dataDir }, stdio: "ignore", windowsHide: true,
+    cwd: process.cwd(), env: { ...process.env, SABER_DATA_DIR: dataDir }, stdio: "ignore", windowsHide: true, detached: process.platform !== "win32",
   });
   const url = `http://127.0.0.1:${port}/`;
   let ready = false;
@@ -45,8 +62,8 @@ try {
   console.log("headless Chromium launched");
   const context = await browser.newContext();
   page = await context.newPage();
-  page.on("console", (message) => { if (message.type() === "error") console.log("browser console error:", message.text()); });
-  page.on("pageerror", (error) => console.log("browser page error:", error.message));
+  page.on("console", (message) => { if (message.type() === "error") { console.log("browser console error:", message.text()); browserErrors.push(`console: ${message.text()}`); } });
+  page.on("pageerror", (error) => { console.log("browser page error:", error.message); browserErrors.push(`pageerror: ${error.message}`); });
   await page.addInitScript((selectedTaskId) => {
     localStorage.setItem("saber.selectedTask", selectedTaskId);
     const callbacks = new Map<number, (value: unknown) => void>();
@@ -103,7 +120,7 @@ try {
     };
     (window as any).__saberStopStreams = () => {
       const state = (window as any).__saberBenchStreams;
-      if (!state) return null;
+      if (!state) return { lost: true, href: location.href, readyState: document.readyState, navigationEntries: performance.getEntriesByType("navigation").length };
       state.observer.disconnect();
       return { sequence: state.sequence, rendered: state.rendered };
     };
@@ -158,24 +175,49 @@ try {
     terminalIds.push(activeSession.id);
   }
   const memorySamples: Array<{ elapsedMs: number; workingSetBytes: number }> = [];
-  const memoryProbe = () => Number(execFileSync("powershell", ["-NoProfile", "-Command", "(Get-Process chrome-headless-shell | Measure-Object -Property WorkingSet64 -Sum).Sum"], { encoding: "utf8" }).trim());
+  const browserErrors: string[] = [];
+  const navigations: string[] = [];
+  const benchStart = Date.now();
+  page.on("framenavigated", (frame) => { if (frame === page!.mainFrame()) navigations.push(`+${Date.now() - benchStart}ms ${frame.url()}`); });
+  const memoryProbe = () => {
+    if (process.platform === "win32") return Number(execFileSync("powershell", ["-NoProfile", "-Command", "(Get-Process chrome-headless-shell | Measure-Object -Property WorkingSet64 -Sum).Sum"], { encoding: "utf8" }).trim());
+    const collected: Array<{ comm: string | null; rssPages: number | null }> = [];
+    for (const entry of readdirSync("/proc")) {
+      if (!/^\d+$/.test(entry)) continue;
+      try {
+        const stat = readFileSync(`/proc/${entry}/stat`, "utf8");
+        collected.push({ comm: commFromProcStat(stat), rssPages: rssPagesFromProcStat(stat) });
+      } catch {}
+    }
+    const totalRssPages = sumRssForComm(collected, headlessCommPrefix);
+    if (totalRssPages === 0) throw new Error(`No ${headlessCommPrefix}* processes were found in /proc for the memory probe`);
+    return totalRssPages * Math.round(Number(execFileSync("getconf", ["PAGESIZE"], { encoding: "utf8" }).trim()) || 4096);
+  };
   memorySamples.push({ elapsedMs: 0, workingSetBytes: memoryProbe() });
   let nextMemorySample = 30_000;
   const streamStart = Date.now();
+  let nextStreamCheck = 5_000;
   await page.evaluate((ids) => { (window as any).__saberBenchStreams = (window as any).__saberBeginStreams(ids); }, terminalIds);
   const streamSamples: number[] = [];
   const renderedSequenceByStream: number[][] = [[], [], []];
+  const streamLost = (elapsed: number, detail: unknown) => new Error(`Streaming page state was lost after ${elapsed} ms of streaming. Navigations observed: ${navigations.length > 0 ? navigations.join(" | ") : "none"}. Browser errors: ${browserErrors.length > 0 ? browserErrors.slice(-5).join(" | ") : "none"}. Detail: ${JSON.stringify(detail)}`);
   while (Date.now() - streamStart < durationMs) {
     const elapsed = Date.now() - streamStart;
     if (elapsed >= nextMemorySample) {
       memorySamples.push({ elapsedMs: elapsed, workingSetBytes: memoryProbe() });
       nextMemorySample += 30_000;
     }
+    if (elapsed >= nextStreamCheck) {
+      const health = await page.evaluate<{ streams: boolean; href: string; errors: number }>(() => ({ streams: !!(window as any).__saberBenchStreams, href: location.href, errors: 0 }));
+      if (!health.streams) throw streamLost(elapsed, { health });
+      nextStreamCheck = elapsed + 5_000;
+    }
     await delay(100);
   }
   await page.evaluate(() => (window as any).__saberPauseStreams());
   await delay(1_000);
   const streamState = await page.evaluate(() => (window as any).__saberStopStreams());
+  if (!streamState || streamState.lost) throw streamLost(durationMs, { streamState, navigations, browserErrors: browserErrors.slice(-10) });
   const renderedEvents: Array<Array<{ sequence: number; latencyMs: number }>> = streamState.rendered;
   for (let stream = 0; stream < renderedEvents.length; stream++) {
     renderedSequenceByStream[stream] = renderedEvents[stream]!.map((event) => event.sequence);
@@ -186,10 +228,11 @@ try {
   const integrity = sequenceByStream.map((expected, index) => ({ stream: index, ...checkSequenceIntegrity(renderedSequenceByStream[index]!, expected) }));
   const viteVersion = (JSON.parse(readFileSync(join(process.cwd(), "node_modules/vite/package.json"), "utf8")) as { version: string }).version;
   const playwrightVersion = (JSON.parse(readFileSync(join(process.cwd(), "node_modules/playwright/package.json"), "utf8")) as { version: string }).version;
+  const hostInfo = platformHostInfo();
   const report = {
     mode: smoke ? "smoke" : "full",
     command: smoke ? "bun run bench:responsiveness -- --smoke" : "bun run bench:responsiveness",
-    host: { os: execFileSync("powershell", ["-NoProfile", "-Command", "(Get-CimInstance Win32_OperatingSystem | Select-Object -ExpandProperty Caption) + ' ' + (Get-CimInstance Win32_OperatingSystem | Select-Object -ExpandProperty Version) + ' ' + $env:PROCESSOR_ARCHITECTURE"], { encoding: "utf8" }).trim(), cpu: execFileSync("powershell", ["-NoProfile", "-Command", "(Get-CimInstance Win32_Processor | Select-Object -First 1 -ExpandProperty Name)"], { encoding: "utf8" }).trim(), memoryBytes: Number(execFileSync("powershell", ["-NoProfile", "-Command", "(Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory"], { encoding: "utf8" }).trim()), displayScale: { deviceScaleFactor: 1, source: "forced by benchmark browser" }, browser: `Chromium ${browser.version()} headless via Playwright ${playwrightVersion}`, runtime: `Node ${process.version}; Vite ${viteVersion}`, appMode: `Vite ${viteVersion} development server under Node; Tauri IPC and PTY mocked` },
+    host: { ...hostInfo, displayScale: { deviceScaleFactor: 1, source: "forced by benchmark browser" }, browser: `Chromium ${browser.version()} headless via Playwright ${playwrightVersion}`, runtime: `Node ${process.version}; Vite ${viteVersion}`, appMode: `Vite ${viteVersion} development server under Node; Tauri IPC and PTY mocked` },
     workload: { persistedTasks: tasks.length, warmups: 10, selectionPairs: selectionSamples.length / 2, streamCount: 3, targetEventsPerSecondPerStream: 20, achievedEventsPerSecondPerStream: sequenceByStream.map((count) => count / (durationMs / 1_000)), durationMs, renderedOutputSamples: streamSamples.length },
     selectionLatencyMs: summarizeSamples(selectionSamples),
     outputLatencyMs: summarizeSamples(streamSamples),
@@ -200,18 +243,22 @@ try {
     revision: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
     caveats: ["Synthetic output only; no provider generation or network time.", "Browser task restoration and xterm rendering are real frontend paths. The observer records each owning xterm's DOM updates even while its surface is hidden; task-selection-to-visible restoration is measured separately.", "Tauri IPC, terminal process creation, and OS PTY output source are mocked.", "Memory samples sum headless Chromium processes and are not Saber Tauri/WebView native memory."],
   };
-  const receiptPath = smoke ? null : "docs/superpowers/specs/2026-09-23-responsiveness-baseline-verification.json";
+  const receiptPath = smoke ? null : process.platform === "win32" ? "docs/superpowers/specs/2026-09-23-responsiveness-baseline-verification.json" : `docs/superpowers/specs/2026-09-23-responsiveness-baseline-verification.${process.platform}.json`;
   if (receiptPath) writeFileSync(join(process.cwd(), receiptPath), JSON.stringify(report, null, 2));
   const { rawSamples: _rawSamples, ...summary } = report;
   console.log(JSON.stringify({ ...summary, memory: { ...report.memory, samples: undefined }, sequenceIntegrity: integrity.map(({ dropped, duplicates, outOfOrder, ...stream }) => ({ ...stream, droppedCount: dropped.length, duplicateCount: duplicates.length, outOfOrderCount: outOfOrder.length })), receiptPath }, null, 2));
 } finally {
   await browser?.close().catch(() => {});
   if (server?.pid) {
-    server.kill();
-    if (process.platform === "win32") try { execFileSync("taskkill", ["/PID", String(server.pid), "/T", "/F"], { stdio: "ignore" }); } catch {}
+    if (process.platform === "win32") {
+      server.kill();
+      try { execFileSync("taskkill", ["/PID", String(server.pid), "/T", "/F"], { stdio: "ignore" }); } catch {}
+      try {
+        execFileSync("powershell", ["-NoProfile", "-Command", `$listener = Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; if ($listener) { $process = Get-CimInstance Win32_Process -Filter "ProcessId=$($listener.OwningProcess)"; if ($process.CommandLine -like '*vite.js*--port ${port}*') { Stop-Process -Id $listener.OwningProcess -Force } }`], { stdio: "ignore" });
+      } catch {}
+    } else {
+      try { process.kill(-server.pid, "SIGKILL"); } catch { try { process.kill(server.pid, "SIGKILL"); } catch {} }
+    }
   }
-  if (process.platform === "win32") try {
-    execFileSync("powershell", ["-NoProfile", "-Command", `$listener = Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; if ($listener) { $process = Get-CimInstance Win32_Process -Filter "ProcessId=$($listener.OwningProcess)"; if ($process.CommandLine -like '*vite.js*--port ${port}*') { Stop-Process -Id $listener.OwningProcess -Force } }`], { stdio: "ignore" });
-  } catch {}
   rmSync(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 500 });
 }
