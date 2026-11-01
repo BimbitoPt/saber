@@ -42,6 +42,16 @@ Use `swarm.level`. Move to sub-agents only when all three hold: genuinely indepe
 
 Stop scaling when any of these appear: coordination traffic grows faster than progress, agents duplicate each other's work, cost per task rises at flat quality, or you cannot explain what each agent did.
 
+## Harness verification
+
+Run `bun run verify:harness` to check that the harness invariants hold:
+- `AGENTS.md` present with core rules (task/run separation, read-only gates, generated-file protection).
+- `docs/harness/diagnostics.md` present with Gate integrity section.
+- Spec template present.
+
+A failing check means the harness has drifted; fix before starting work.
+
+
 ## Gate integrity
 
 - The check command comes from the feature spec, not from the worker.

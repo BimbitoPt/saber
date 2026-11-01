@@ -10,10 +10,12 @@
     "tauri:prepare-runtime": "bun scripts/prepare-tauri-runtime.ts",
     "tauri:dev": "bun run build && bun run tauri:prepare-runtime && bun x tauri dev",
     "tauri:build": "bun run build && bun run tauri:prepare-runtime && bun x tauri build",
-    "tauri:linux:build": "bun run build && bun run tauri:prepare-runtime && bun x tauri build --bundles deb,appimage",
+    "tauri:linux:build": "export NO_STRIP=true APPIMAGE_EXTRACT_AND_RUN=1 && bun run build && bun run tauri:prepare-runtime && bun run patch:linuxdeploy-gtk && bun x tauri build --bundles deb,appimage",
+    "patch:linuxdeploy-gtk": "bun scripts/patch-linuxdeploy-gtk.ts",
     "test": "vitest run",
     "bench:responsiveness": "node scripts/bench-responsiveness.ts",
-    "test:terminal": "bun scripts/verify-terminal.ts"
+    "test:terminal": "bun scripts/verify-terminal.ts",
+    "verify:harness": "bun scripts/verify-harness.ts"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.2.1",

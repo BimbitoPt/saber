@@ -1,0 +1,16 @@
+pkgname=saber
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Saber (by Mstudio) terminal-first task workspace"
+arch=(x86_64)
+url="https://github.com/bimbitopt/saber"
+license=(LicenseRef-Proprietary)
+depends=(gtk3 webkit2gtk-4.1)
+options=(!debug !strip)
+source=("Saber_${pkgver}_amd64.deb")
+sha256sums=(SKIP)
+
+package() {
+  mkdir -p "$pkgdir"
+  bsdtar -xf "$srcdir/${source[0]}" --include="data.tar.*" --to-stdout | bsdtar -xf - -C "$pkgdir"
+}
