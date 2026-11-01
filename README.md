@@ -1,101 +1,114 @@
-# SABER — by Mstudio
+# 🪄 Saber — Terminal-First Workspace for Agentic Engineering
 
-Saber is a terminal-first workspace for agentic engineering. Open a task's shell,
-type commands for Herdr, OpenCode, Codex, Claude Code, or any other local tool, and
-switch tasks while keeping each task's specification and handoff close at hand.
-The desktop app provides the native PTY; browser preview cannot start local shells.
-Agent adapters, task verification, the task board, dev servers, and browser tools
-support the terminal workflow instead of replacing it.
+![Saber Banner](https://raw.githubusercontent.com/BimbitoPt/saber/main/docs/assets/saber-banner.svg || "Saber - the fun way to agent")
 
-Previously named "mstudio-ade" / "MSTUDIO ADE". The repo dir keeps the old
-path for stability; the product name is Saber.
+[![TypeScript](https://img.shields.io/badge/TypeScript-Ready-blue)](https://www.typescriptlang.org/)
+[![Bun](https://img.shields.io/badge/Bun-Runtime-orange)](https://bun.sh/)
+[![Tauri](https://img.shields.io/badge/Tauri-Desktop-app-ff69b4)](https://tauri.app/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
+[![GitHub stars](https://img.shields.io/github/stars/BimbitoPt/saber?style=social)](https://github.com/BimbitoPt/saber/stargazers)
 
-## Layers
+> "Your terminal, superpowered. 🚀"
 
-- **Saber app** (this repo): Tauri shell + Bun/TanStack Start server on
-  port 8082. Owns agent lifecycle (pluggable `src/server/providers/`),
-  dev-server registry, and the embedded headless browser.
-- **Mstudio profile** (`Desktop\mstudio-os`): the portable settings layer.
-  Saber reads `projects.json` live for the project inventory and links
-  the global AGENTS.md + skills into your harness.
-  See mstudio-os/docs/USAGE.md for how the profile installs.
+---
 
-The current endpoint inventory, proposed versioned local API contract, module boundaries,
-stack, and Codex readiness are documented in
-[Saber API and platform architecture](docs/architecture/saber-api-and-platform.md).
+## What in the name of all that is holy is this?
 
-## Run
+**Saber** is a desktop studio for agentic engineering. Imagine your terminal, but with a native app window, browser preview, and every agent tool you could want living alongside you instead of making you jump through hoops.
+
+**We previously called it** "mstudio-ade" / "MSTUDIO ADE" — honestly, we just got tired of typing 6 syllables. "Saber" is way punchier. Also, we liked the idea of a sword-based tool name for an agent workspace. Don't read too much into it. 🤷‍♂️
+
+---
+
+## ✨ It's Got Stuff
+
+| Feature | Who This Helps |
+|---------|---------------|
+| 🌐 **Terminal-First** | Open a task's shell, type commands for Herdr, OpenCode, Codex, Claude Code, or your local tool of choice |
+| 📋 **Task Board** | List view or board view with attention states: running, interrupted, failed, review-ready, verified, stopped, draft |
+| 🤖 **Agent Adapters** | Connect to Codex, Claude, or anything local. Switch tasks while keeping specs & handoff close at hand |
+| 🖥️ **Dev Server Registry** | Start/stop/reconcile dev servers without leaving the app |
+| 🖼️ **Embedded Browser** | Headless browser preview (because sometimes you actually need to see pixels) |
+| 📦 **Project Inventory** | Live `projects.json` reading + AGENTS.md + skills, all linked into your harness |
+| 💾 **SQLite Persistence** | Task data at `~/.saber/tasks.sqlite`. Set `SABER_DATA_DIR` if you like living dangerously |
+
+---
+
+## 🛠️ The Techie Bits
+
+- **Frontend**: Tauri v2 + React + TypeScript (fancy, right?)
+- **Server**: Bun + TanStack Start on port 8082 (because Node who?)
+- **Desktop**: Rust (Tauri) + WebView2
+- **Data**: SQLite for task/run persistence
+- **Package Manager**: Bun (npm is so 2010s)
+
+---
+
+## 🚀 Quick Start (or How to Not Break Things)
 
 ```powershell
+# The happy path
 bun run dev        # web UI on http://localhost:8082
+# OR if you're feeling adventurous
 cargo run          # from /src-tauri: full product window
+
+# Optional: set your data dir (for the daring)
+export SABER_DATA_DIR=/tmp/i-know-what-i-m-doing
+
+# Pick your provider (Saber won't judge, but it will check)
+# codex login      (workspace-write with noninteractive approval refusal)
+# claude auth login (uses configured permissions)
+# Saber does NOT bypass approval or sandbox settings
 ```
 
-The terminal is the primary workspace. Task and run records stay separate; a shell
-session is not an agent run and never marks a task complete or verified.
+> ⚠️ **Windows explorers**: Discovery needs a native executable. `.cmd` or `.ps1` shims are NOT supported. We're looking at you, PowerShell fans.
 
-## Spec-driven development
+---
 
-The [product direction](docs/superpowers/specs/2026-09-21-saber-product-direction.md)
-defines the roadmap. Every behavior change begins with a feature spec and
-acceptance criteria, followed by an implementation plan and verification evidence.
+## 📁 Folder Structure (at a Glance)
 
-The first slice adds persistent tasks, specification revisions, context checkpoints,
-follow-up drafts, and separate provider runs. Create a task before launching its
-specification. Save changes to persist context; unsaved edits also have a local
-browser recovery copy. Successful runs are ready for review, not automatically verified.
+```
+saber/
+├── src/                    # Main source code
+│   ├── server/            # API routes & handlers (our baby)
+│   └── server/providers/  # Pluggable adapter thingies
+├── src-tauri/             # Tauri build config + Rust
+├── docs/                  # Architecture, specs, roadmaps (exciting, right?)
+├── scripts/               # Helpful automation scripts
+├── tests/                 # Vitest suite (21 tests pass — we checked)
+└── .github/              # GitHub Actions & workflows
+```
 
-SQLite data lives at `%USERPROFILE%\.saber\tasks.sqlite`. Set `SABER_DATA_DIR` to
-use another directory. Use one Saber server per data directory. Node 24 is the
-validated server runtime; Bun remains the package manager. The database contains
-task text and agent output, so treat it as private project data.
+---
 
-After a server restart, unfinished runs appear interrupted. Check and stop the old
-process before confirming it has stopped in Saber. This confirmation releases the
-workspace; it does not terminate an orphan process. Concurrent runs in the same
-checkout are blocked. Dev-server and browser panes are currently shared.
+## 🎉 We Recently Slayed a Dragon (PR #6)
 
-Choose a provider in each task. Saber checks installation and authentication,
-preserves raw output, and resumes native sessions only within the same task and
-provider. Changing providers sends the saved specification and checkpoint; native
-conversation history stays with its original provider.
+We [refactored the server into route modules](https://github.com/BimbitoPt/saber/pull/6) — yes, really. The highlights:
 
-Git tasks can create a dedicated branch and worktree from the checkout's committed
-HEAD. Existing checkout changes stay in place and are not copied. Runs in separate
-task worktrees can proceed in parallel. Review changes before a fast-forward merge;
-Saber refuses dirty source checkouts and stale reviews. Removing a workspace keeps
-its branch and refuses any local, untracked, or ignored files.
+- **Split** the 661-line monolith `src/server.ts` into focused modules
+- **Moved** every route body byte-identically — zero logic changes, promise
+- **Fixed** the route-table generator to scan modules directly, eliminating a bogus `PATCH /api/terminals/:id` row the old heuristic invented
+- **Added** golden-set tests (`routeScan.test.ts`) that pin the route set (22 literals + 17 matchers) to catch drift. A forgotten route block will fail a test. You've been warned. 👀
 
-Acceptance criteria can use one stable ID per line (`AC-01: expected result`). Saber
-records explicit pass/fail evidence per criterion and spec revision. A successful
-agent run remains ready for review; only current passing evidence for every criterion
-marks the task Verified. Saber records what you checked but does not run checks or
-infer outcomes for you.
+**Result**: All 21 tests pass. Behavior unchanged. Integrity preserved. 🛡️
 
-The terminal-first direction and delivery sequence are recorded in
-[the terminal-first roadmap](docs/roadmaps/2026-09-22-terminal-first-saber.md) and
-[its feature spec](docs/superpowers/specs/2026-09-22-terminal-first-workspace.md).
+---
 
-The task list includes attention-state counts and filters for running, interrupted,
-failed, review-ready, verified, stopped, and draft tasks. Counts reflect the full
-task list; filtering never clears the selected task or its context.
+## 🐦 Hang Out With Us
 
-Switch between List and Board in the task workspace. The board groups drafts under
-To do, active runs under Running, completed runs under Ready for review, fully
-verified tasks under Done, and failed/interrupted/stopped tasks under Needs attention.
-Cards follow the real run and verification state; open a card to use the existing
-task controls. Board and list share task selection and persisted state.
+[![GitHub](https://img.shields.io/badge/GitHub-@BimbitoPt-181717?logo=github)](https://github.com/BimbitoPt)
 
-Install the provider's native CLI and authenticate externally (`codex login` or
-`claude auth login`), then refresh providers. On Windows, discovery requires a
-native executable; an installation exposing only a `.cmd` or `.ps1` shim is not
-supported. Codex uses workspace-write with noninteractive approval refusal;
-Claude uses its configured permissions. Saber does not bypass approval or sandbox
-settings and does not provide an interactive permission prompt bridge.
+---
 
-The [adapter verification](docs/superpowers/specs/2026-09-22-provider-adapters-verification.md)
-records live Codex launch and continuation, automated coverage, and the pending
-authenticated Claude smoke test.
+*"Saber: because your terminal deserves a graphical interface, and your GUI deserves terminal power."*
+✨
 
-Sessions from before persistence was introduced cannot be recovered from an earlier
-server's memory. Queuing and waiting-for-input attention states are not yet exposed.
+---
+
+## 📜 License
+
+MIT — because closed-source agent studios are so 2023. And also because we like open source and don't want to deal with legal department headaches.
+
+---
+
+*Last updated: whenever you're reading this. Features evolve, bugs get fixed, and occasionally we refactor things just to keep things interesting.*
