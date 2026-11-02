@@ -79,3 +79,9 @@ A second, mutation-based review of that fix commit found two assertions that sti
 Decisions: module order is irrelevant while route sets are disjoint, so the original order was kept to make a future overlap obvious; a wrong-method request is still a 404 because no module claims it, exactly as the single file behaved; and the git/browser-backed handlers are exercised by their existing suites rather than the dispatcher suite, because reaching them would spawn real work.
 
 Remaining work: the dispatch chain is a linear scan of six modules with no per-path prefix index; that is deliberate at 30 routes and becomes a routing table if the route count grows. `roles.ts` owns `/api/tasks/:id/teams*` while `tasks.ts` owns the other `/api/tasks/:id/*` paths, so a future broad matcher in `tasks.ts` could shadow it; the golden test proves presence, not precedence. `server.ts` still depends on `@tanstack/react-start/server-entry` through a dynamic import, so its entry lookup is not unit-tested. `interventions: 0`.
+
+## Post-merge correction (2026-11-02)
+
+Merge `eb7626e` brought the route modules from `refactor/server-decomposition` but resolved `src/server.ts` to the first parent, leaving the 607-line monolith as the live entry while `routes/`, `http.ts`, and `shutdown.ts` became dead code. MOD-09..11 were therefore false on `master` even though the module suites stayed green: the dispatcher suite imports `routes/index.ts` directly, and `routeScan.test.ts` scans only the module files.
+
+Correction: `src/server.ts` is restored to the 42-line entry, `src/server/http.ts` carries the `e5f5350` error-surfacing change (`errorResponse` falls back to the thrown message), and `src/server/entry.test.ts` gates the entry size plus its imports of `./server/routes` and `./server/shutdown`, so the wiring cannot silently revert again. The revision-discard dispatcher assertion now expects the handler's own `Revision not found` body instead of the removed generic text.

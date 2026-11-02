@@ -7,14 +7,15 @@ export function jsonResponse(data: unknown, status = 200) {
   });
 }
 
-export function errorResponse(error: unknown, status = 500, clientMessage = "Request failed") {
+export function errorResponse(error: unknown, status = 500, clientMessage?: string) {
+  const message = clientMessage ?? (error instanceof Error ? error.message : String(error));
   console.error(describeError(error));
-  return jsonResponse({ error: clientMessage }, status);
+  return jsonResponse({ error: message }, status);
 }
 
 export function routeError(error: unknown) {
   const message = String(error);
   const status = /not found/i.test(message) ? 404
     : /only draft|active revision|already|belongs to another|cannot change|interrupted|interactive terminal|at most|must include|stale|local changes|branch changed/i.test(message) ? 409 : 400;
-  return errorResponse(error, status, "Request could not be completed");
+  return errorResponse(error, status);
 }
