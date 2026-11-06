@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 use tauri::{Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_dialog::DialogExt;
 
+mod origin;
 mod runtime;
 mod terminal;
 
@@ -225,6 +226,10 @@ fn main() {
                 }
             };
             let url = format!("http://127.0.0.1:{}/", address.port());
+            // Terminal IPC is gated on this exact origin: the capability file
+            // must stay broad (the packaged port is ephemeral), so the command
+            // layer is the trust boundary. See origin::origin_allowed.
+            app.manage(origin::ServerOrigin::new(address.port()));
             if let Err(error) = WebviewWindowBuilder::new(
                 app,
                 "main",
