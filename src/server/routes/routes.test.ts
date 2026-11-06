@@ -18,7 +18,7 @@ let directory: string;
 let handleApi: (request: Request) => Promise<Response | null>;
 
 function api(path: string, init?: RequestInit) {
-  return handleApi(new Request(`http://localhost${path}`, init));
+  return handleApi(new Request(`http://localhost${path}`, { ...init, headers: { host: "localhost", ...init?.headers } }));
 }
 
 function post(path: string, body: unknown) {
@@ -60,6 +60,52 @@ describe("api dispatcher", () => {
   it("MOD-09 falls back to 404 for a known path with the wrong method", async () => {
     expect((await api("/api/tasks", { method: "PUT" }))?.status).toBe(404);
     expect((await api("/api/browser/screenshot", { method: "POST" }))?.status).toBe(404);
+  });
+});
+
+describe("legacy api transport gate", () => {
+  const savedRemote = process.env.SABER_ALLOW_REMOTE_API;
+  delete process.env.SABER_ALLOW_REMOTE_API;
+
+  function loopback(path: string, init?: RequestInit) {
+    return handleApi(new Request(`http://127.0.0.1:8082${path}`, { ...init, headers: { host: "127.0.0.1:8082", ...init?.headers } }));
+  }
+
+  function foreign(path: string, init?: RequestInit) {
+    return handleApi(new Request(`http://127.0.0.1:8082${path}`, {
+      ...init,
+      headers: { ...init?.headers, host: "192.168.1.50:8082" },
+    }));
+  }
+
+  it("accepts loopback requests with a matching host and no origin", async () => {
+    expect((await loopback("/api/nothing-here"))?.status).toBe(404);
+  });
+
+  it("accepts loopback same-origin requests", async () => {
+    const response = await loopback("/api/tasks", { method: "POST", headers: { origin: "http://127.0.0.1:8082", "content-type": "application/json" }, body: "{}" });
+    expect(response?.status).toBe(400);
+  });
+
+  it("rejects foreign-host requests and cross-site origins", async () => {
+    expect((await foreign("/api/nothing-here"))?.status).toBe(403);
+    const crossSite = await loopback("/api/sessions", { method: "POST", headers: { origin: "https://evil.example", "content-type": "text/plain" }, body: "{}" });
+    expect(crossSite?.status).toBe(403);
+  });
+
+  it("rejects a loopback url whose host header disagrees", async () => {
+    const response = await handleApi(new Request("http://127.0.0.1:8082/api/nothing-here", { headers: { host: "localhost:9999" } }));
+    expect(response?.status).toBe(403);
+  });
+
+  it("allows non-loopback access only when SABER_ALLOW_REMOTE_API=1", async () => {
+    process.env.SABER_ALLOW_REMOTE_API = "1";
+    try {
+      expect((await foreign("/api/nothing-here"))?.status).toBe(404);
+    } finally {
+      if (savedRemote === undefined) delete process.env.SABER_ALLOW_REMOTE_API;
+      else process.env.SABER_ALLOW_REMOTE_API = savedRemote;
+    }
   });
 });
 
