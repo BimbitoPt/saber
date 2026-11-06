@@ -13,6 +13,7 @@ import { taskWorkdir } from "./gitWorkspaces";
 import { resolveProjectSource } from "./projectProfiles";
 import { getTerminalLocks, type TerminalLocks } from "./terminalLocks";
 import { formatOnyxSection, queryOnyxContext, type OnyxResolution } from "./onyxContext";
+import { visualWebContext } from "./visualWeb";
 
 export const DEFAULT_ROLE_ID = "default";
 export const DEFAULT_ROLE_INSTRUCTIONS = "Act as the project's implementing agent: follow the profile conventions and stack, verify each acceptance criterion with real checks, and report verification per criterion without merging or deploying.";
@@ -168,6 +169,7 @@ export class AgentRuns {
     const parts: Array<{ name: string; text: string }> = [
       { name: "task title and specification", text: [`Task: ${task.title}`, `Specification revision: ${task.revision}`, task.spec, `Acceptance criteria:\n${task.criteria}`].join("\n\n") },
     ];
+    parts.push(...visualWebContext(task, followup));
     if (task.context) parts.push({ name: "saved context", text: `Saved context:\n${task.context}` });
     if (revision) {
       parts.push({ name: `project profile revision ${revision.id.slice(0, 8)}`, text: [`Project profile (revision ${revision.id}, ${revision.entries.length} entries):`, ...revision.entries.map((entry) => `${entry.key} (${entry.origin}):\n${entry.content}`)].join("\n\n") });

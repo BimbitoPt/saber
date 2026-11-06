@@ -15,6 +15,10 @@ Never make the user choose frameworks, libraries, rendering techniques, componen
 
 If no target project exists, create a complete working website project in the requested or current workspace using the best-fit stack. If a project exists, inspect it and preserve its conventions. Do not stop at a plan, wireframe, prompt, or design brief: deliver the working website.
 
+## Saber runtime integration
+
+Saber automatically injects this skill, its guide, and the task template into runs whose task or follow-up clearly describes website, landing-page, frontend, portfolio, e-commerce, or 3D web work. Do not ask the user to install or copy these files into the target workspace. The instructions apply even when the target project is outside the Saber repository.
+
 ## Required workflow
 
 Read `docs/harness/visual-web-agent.md` and use `docs/harness/visual-web-task-template.md` to create the design contract before implementation.
@@ -24,7 +28,7 @@ Read `docs/harness/visual-web-agent.md` and use `docs/harness/visual-web-task-te
 3. Inspect supplied references in a browser. Extract principles; do not imitate source code or copy protected assets.
 4. Write the design contract. Pick a distinct visual concept, not a generic template.
 5. Implement a complete first pass with real copy, intentional section rhythm, responsive behavior, and functional interactions.
-6. Run the actual dev server. Use Saber Browser to inspect 1440×900, 1024×768, and 390×844. Capture screenshots and inspect all major sections.
+6. Run the actual dev server. Use Saber Browser when it is exposed to the agent session; otherwise use Playwright or browser automation available in the target workspace. Inspect 1440×900, 1024×768, and 390×844, capture screenshots, and inspect all major sections. If no browser is available, state that limitation and do not claim visual verification.
 7. Score the page using the visual rubric. Write down concrete defects; fix the highest-impact defects first.
 8. Repeat critique/repair for up to three passes. Stop earlier if all criteria pass. Ask before exceeding the budget.
 9. Run build, typecheck, tests, and relevant accessibility/performance checks.
