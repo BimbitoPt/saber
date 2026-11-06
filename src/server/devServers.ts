@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { join } from "node:path";
+import type { Readable } from "node:stream";
 import { reloadProjects, type Project } from "./projects";
 
 export type DevServerState = "starting" | "running" | "stopping" | "exited" | "failed";
@@ -24,7 +25,10 @@ export interface DevServerListItem {
 }
 
 /** The child handle is authoritative for liveness; the entry is only a projection of it. */
-export type ManagedChild = Pick<ChildProcess, "pid" | "once" | "kill">;
+export type ManagedChild = Pick<ChildProcess, "pid" | "once" | "kill"> & {
+  stdout?: Readable | null;
+  stderr?: Readable | null;
+};
 
 export interface DevServerDeps {
   /** Spawns a project dev server. Injected so tests never spawn real processes. */
@@ -49,9 +53,13 @@ export const DEV_PORT_MAX = 8099;
 const APP_PORT = 8082;
 const PROBE_TIMEOUT_MS = 1_500;
 const KILL_GRACE_MS = 2_000;
+const LOG_CAPACITY = 500;
 
 interface Entry extends DevServerEntry {
   proc: ManagedChild | null;
+  logs: string[];
+  logTotal: number;
+  logPartial: string;
 }
 
 function wireStatus(state: DevServerState): DevServerStatus {
@@ -91,7 +99,7 @@ function defaultSpawn(project: Project, port: number): ManagedChild {
     cwd: project.path,
     shell: false,
     windowsHide: true,
-    stdio: "ignore",
+    stdio: ["ignore", "pipe", "pipe"],
   });
 }
 
@@ -204,11 +212,11 @@ export class DevServerManager {
     } catch (error) {
       // Keep a failed projection so the pane reports `down` instead of hiding the attempt.
       this.reserved.delete(port);
-      this.entries.set(name, { project, port, state: "failed", startedAt: this.deps.now(), proc: null });
+      this.entries.set(name, { project, port, state: "failed", startedAt: this.deps.now(), proc: null, logs: [], logTotal: 0, logPartial: "" });
       throw error;
     }
 
-    const entry: Entry = { project, port, state: "starting", startedAt: this.deps.now(), proc };
+    const entry: Entry = { project, port, state: "starting", startedAt: this.deps.now(), proc, logs: [], logTotal: 0, logPartial: "" };
     this.entries.set(name, entry);
     // The entry now reserves its port, so the allocation reservation can be released.
     this.reserved.delete(port);
@@ -286,7 +294,42 @@ export class DevServerManager {
   }
 
   findForPath(workdir: string): DevServerEntry | undefined {
-    return [...this.entries.values()].find((e) => workdir.startsWith(e.project.path));
+    return [...this.entries.values()].find((e) => {
+      if (!workdir.startsWith(e.project.path)) return false;
+      // A prefix alone would match sibling directories (repo vs repo2); the next
+      // character must be a path boundary, whichever separator the OS uses.
+      const next = workdir.charAt(e.project.path.length);
+      return next === "" || next === "/" || next === "\\";
+    });
+  }
+
+  /** Recent combined stdout/stderr lines; `after` is a cursor into the absolute line numbering. */
+  devServerLog(name: string, after: number): { lines: string[]; total: number } | undefined {
+    const entry = this.entries.get(name);
+    if (!entry) return undefined;
+    const firstAvailable = entry.logTotal - entry.logs.length;
+    const from = Math.max(after, firstAvailable);
+    return { lines: entry.logs.slice(from - firstAvailable), total: entry.logTotal };
+  }
+
+  private attachLogs(entry: Entry, proc: ManagedChild): void {
+    for (const stream of [proc.stdout, proc.stderr]) {
+      if (!stream) continue;
+      stream.setEncoding("utf8");
+      stream.on("data", (chunk: string) => {
+        entry.logPartial += chunk;
+        const lines = entry.logPartial.split(/\r?\n/);
+        entry.logPartial = lines.pop() ?? "";
+        for (const line of lines) this.pushLog(entry, line);
+      });
+    }
+  }
+
+  private pushLog(entry: Entry, line: string): void {
+    if (!line.trim()) return;
+    entry.logs.push(line);
+    entry.logTotal += 1;
+    if (entry.logs.length > LOG_CAPACITY) entry.logs.splice(0, entry.logs.length - LOG_CAPACITY);
   }
 
   /** Resolves once the start-up probe loop for a project has settled. */
@@ -309,6 +352,7 @@ export class DevServerManager {
   private watch(name: string, entry: Entry): void {
     const proc = entry.proc;
     if (!proc) return;
+    this.attachLogs(entry, proc);
     proc.once("error", (error: Error) => {
       console.error(`dev server ${name} failed: ${error.message}`);
       this.settleDeath(entry, "failed");
@@ -328,6 +372,8 @@ export class DevServerManager {
     // marked `failed` by a timed-out stop must still forget its handle when it exits.
     if (entry.state !== "exited" && entry.state !== "failed") entry.state = state;
     entry.proc = null;
+    if (entry.logPartial.trim()) this.pushLog(entry, entry.logPartial);
+    entry.logPartial = "";
   }
 
   private async monitorUp(name: string, entry: Entry): Promise<void> {
@@ -437,4 +483,8 @@ export function stopAllDevServers(): Promise<void> {
 
 export function findDevServerForPath(workdir: string): DevServerEntry | undefined {
   return defaultManager.findForPath(workdir);
+}
+
+export function devServerLog(name: string, after: number): { lines: string[]; total: number } | undefined {
+  return defaultManager.devServerLog(name, after);
 }

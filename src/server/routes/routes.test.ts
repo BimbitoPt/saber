@@ -194,6 +194,12 @@ describe("project routes", () => {
     expect(await json(records)).toEqual([]);
   });
 
+  it("ENV-01 serves dev-server log cursors with validation", async () => {
+    expect((await api("/api/dev-servers/logs"))?.status).toBe(400);
+    expect((await api("/api/dev-servers/logs?project=ghost&after=0"))?.status).toBe(404);
+    expect((await api("/api/dev-servers/logs?project=ghost&after=-1"))?.status).toBe(400);
+  });
+
   it("MOD-06 validates project records and profiles", async () => {
     expect((await post("/api/project-records", {}))?.status).toBe(400);
     const registered = await post("/api/project-records", { path: directory, displayName: "Workspace" });

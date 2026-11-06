@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
 import { createDevServerManager, DEV_PORT_MIN, resolveBunBinary, type DevServerDeps, type ManagedChild } from "./devServers";
 import type { Project } from "./projects";
@@ -6,6 +7,8 @@ import type { Project } from "./projects";
 class FakeChild extends EventEmitter {
   pid: number;
   readonly kill = vi.fn(() => true);
+  readonly stdout = new PassThrough();
+  readonly stderr = new PassThrough();
 
   constructor(pid: number) {
     super();
@@ -273,5 +276,59 @@ describe("dev server lifecycle", () => {
     expect(resolveBunBinary({ USERPROFILE: "C:\\Users\\dev" }, "win32", which)).toContain("bun.exe");
     expect(resolveBunBinary({}, "linux", which)).toBe("bun");
     expect(resolveBunBinary({}, "win32", () => "C:\\resolved\\bun.exe")).toBe("C:\\resolved\\bun.exe");
+  });
+});
+
+describe("dev server logs", () => {
+  it("captures stdout and stderr lines with a resumable cursor", async () => {
+    const h = harness({ waitUpMs: 1_000 });
+    await h.manager.start("alpha");
+    await h.manager.settle("alpha");
+
+    h.children[0].stdout.write("vite ready\n");
+    h.children[0].stderr.write("warn: deprecated\n");
+    h.children[0].stdout.write("partial-without-newline");
+
+    expect(h.manager.devServerLog("alpha", 0)).toEqual({ lines: ["vite ready", "warn: deprecated"], total: 2 });
+
+    h.children[0].stdout.write(" finished\n");
+    expect(h.manager.devServerLog("alpha", 2)).toEqual({ lines: ["partial-without-newline finished"], total: 3 });
+    expect(h.manager.devServerLog("alpha", 99)).toEqual({ lines: [], total: 3 });
+  });
+
+  it("keeps only the most recent window of lines", async () => {
+    const h = harness({ waitUpMs: 1_000 });
+    await h.manager.start("alpha");
+    await h.manager.settle("alpha");
+
+    for (let i = 0; i < 600; i++) h.children[0].stdout.write(`line-${i}\n`);
+
+    const log = h.manager.devServerLog("alpha", 0)!;
+    expect(log.total).toBe(600);
+    expect(log.lines).toHaveLength(500);
+    expect(log.lines[0]).toBe("line-100");
+    expect(log.lines.at(-1)).toBe("line-599");
+  });
+
+  it("reports no logs for unknown projects and drops them with the entry", async () => {
+    const h = harness({ waitUpMs: 1_000 });
+    expect(h.manager.devServerLog("missing", 0)).toBeUndefined();
+
+    await h.manager.start("alpha");
+    await h.manager.settle("alpha");
+    h.children[0].stdout.write("goodbye\n");
+    h.children[0].emit("exit", 0, null);
+    h.manager.reconcile();
+    expect(h.manager.devServerLog("alpha", 0)).toBeUndefined();
+  });
+
+  it("matches only real path descendants when injecting the dev server URL", async () => {
+    const h = harness({ waitUpMs: 1_000 });
+    await h.manager.start("beta");
+    await h.manager.settle("beta");
+
+    expect(h.manager.findForPath("C:\\work\\beta")?.project.name).toBe("beta");
+    expect(h.manager.findForPath("C:\\work\\beta\\packages\\app")?.project.name).toBe("beta");
+    expect(h.manager.findForPath("C:\\work\\beta2")).toBeUndefined();
   });
 });

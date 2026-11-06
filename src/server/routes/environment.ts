@@ -1,14 +1,24 @@
 import { jsonResponse, errorResponse } from "../http";
 import { describeError } from "../../lib/error-capture";
-import { startDevServer, listDevServers, stopDevServer } from "../devServers";
+import { startDevServer, listDevServers, stopDevServer, devServerLog } from "../devServers";
 import { goto as browserGoto, screenshot as browserShot, act as browserAct, currentUrl } from "../browser";
 import type { RouteHandler } from "./types";
 
 export const handle: RouteHandler = async (ctx) => {
-  const { request, path } = ctx;
+  const { request, url, path } = ctx;
 
   if (path === "/api/dev-servers" && request.method === "GET") {
     return jsonResponse(listDevServers());
+  }
+
+  if (path === "/api/dev-servers/logs" && request.method === "GET") {
+    const project = url.searchParams.get("project");
+    if (!project) return jsonResponse({ error: "project is required" }, 400);
+    const afterRaw = url.searchParams.get("after") ?? "0";
+    if (!/^(0|[1-9][0-9]*)$/.test(afterRaw)) return jsonResponse({ error: "Invalid cursor" }, 400);
+    const log = devServerLog(project, Number(afterRaw));
+    if (!log) return jsonResponse({ error: "not found" }, 404);
+    return jsonResponse(log);
   }
 
   if (path === "/api/dev-servers/start" && request.method === "POST") {
