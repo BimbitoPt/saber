@@ -328,8 +328,8 @@ describe("dev server logs", () => {
     await h.manager.settle("alpha");
 
     h.children[0].stdout.write("building");
-    h.children[0].stderr.write("warning: deprecated\\n");
-    h.children[0].stdout.write(" app\\n");
+    h.children[0].stderr.write("warning: deprecated\n");
+    h.children[0].stdout.write(" app\n");
 
     expect(h.manager.devServerLog("alpha", 0)).toEqual({
       lines: ["warning: deprecated", "building app"],
