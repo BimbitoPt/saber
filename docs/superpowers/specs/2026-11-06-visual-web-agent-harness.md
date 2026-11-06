@@ -8,6 +8,12 @@ Authorization: user requested the visual AI-agent harness to be usable directly 
 
 ## Problem and user workflow
 
+Saber must work for users who cannot code and do not know frontend tooling. A user should be able to say "Build a premium 3D website for my car company" and receive a complete, running, responsive, polished website. The user describes the business and desired outcome; Saber autonomously translates that into brand direction, page structure, copy, asset strategy, 3D experience, implementation, browser QA, and repairs.
+
+The current harness is too developer-oriented if it assumes the user can provide a detailed design contract or choose technical tools. Those are agent responsibilities. The harness therefore needs a plain-language prompt path, autonomous brief interpretation, assumption management, and an explicit end-to-end delivery requirement.
+
+Saber orchestrates coding agents, but frontend quality is still too dependent on model taste and unverified claims. Users need a repeatable visual workflow that guides an agent from vague intent to a finished, evidence-backed website.
+
 Saber orchestrates coding agents, but frontend quality is still too dependent on model taste and unverified claims. Users need a repeatable visual workflow that guides an agent from brief to design contract, implementation, browser inspection, critique, repair, and evidence-backed completion.
 
 ## Scope and exclusions
