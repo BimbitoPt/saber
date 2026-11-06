@@ -104,6 +104,15 @@ export function listDevServers() {
   return jsonFetch<DevServerItem[]>("/api/dev-servers");
 }
 
+export interface DevServerLogs {
+  lines: string[];
+  total: number;
+}
+
+export function fetchDevServerLogs(project: string, after: number) {
+  return jsonFetch<DevServerLogs>(`/api/dev-servers/logs?project=${encodeURIComponent(project)}&after=${after}`);
+}
+
 export const listTasks = () => jsonFetch<TaskSummary[]>("/api/tasks");
 export const createTask = (input: TaskInput) => jsonFetch<TaskRecord>("/api/tasks", {
   method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input),

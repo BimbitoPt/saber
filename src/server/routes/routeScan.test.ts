@@ -20,6 +20,7 @@ const EXPECTED_LITERALS = [
   "GET /api/browser/screenshot",
   "GET /api/default-model",
   "GET /api/dev-servers",
+  "GET /api/dev-servers/logs",
   "GET /api/project-profiles",
   "GET /api/project-records",
   "GET /api/projects",
