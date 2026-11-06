@@ -263,10 +263,26 @@ export class AgentRuns {
   hasActiveWorkspace(project: string) {
     return [...this.active.keys()].some((id) => workspacesOverlap(this.store.getRun(id)!.project, project));
   }
+
+  async stopAll(timeoutMs = 5_000): Promise<void> {
+    const ids = [...this.active.keys()];
+    await Promise.allSettled(ids.map((id) => this.stop(id)));
+    const deadline = Date.now() + timeoutMs;
+    while (this.active.size > 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    for (const child of [...this.active.values()]) {
+      try { child.kill("SIGKILL"); } catch {}
+    }
+  }
 }
 
 const runtime = globalThis as typeof globalThis & { saberAgentRuns?: AgentRuns };
 
 export function getAgentRuns() {
   return runtime.saberAgentRuns ??= new AgentRuns(getTaskStore());
+}
+
+export function stopAllAgentRuns(): Promise<void> {
+  return getAgentRuns().stopAll();
 }

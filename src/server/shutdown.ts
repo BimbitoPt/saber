@@ -1,19 +1,26 @@
 import { describeError } from "../lib/error-capture";
+import { stopAllAgentRuns } from "./agentRuns";
+import { getTaskStore } from "./taskStore";
 import { reconcileDevServers, stopAllDevServers } from "./devServers";
 import { shutdown as browserShutdown } from "./browser";
 
-// The server process owns the dev-server children and the verification browser, so
-// both are torn down here: stop dev servers, then the browser, as the spec orders it.
+// The server process owns the dev-server children, the agent-run children and the
+// verification browser, so all three are torn down here: dev servers, agent runs,
+// browser, then one final event flush, in that order.
 export interface ShutdownDeps {
   reconcile(): string[];
   stopAll(): Promise<void>;
+  stopAgentRuns(): Promise<void>;
   shutdownBrowser(): Promise<void>;
+  flushEvents(): void;
 }
 
 const defaultShutdownDeps: ShutdownDeps = {
   reconcile: reconcileDevServers,
   stopAll: stopAllDevServers,
+  stopAgentRuns: stopAllAgentRuns,
   shutdownBrowser: browserShutdown,
+  flushEvents: () => getTaskStore().flushEvents(),
 };
 
 let shutdownOnce: Promise<void> | undefined;
@@ -30,7 +37,17 @@ async function runShutdown(deps: ShutdownDeps): Promise<void> {
     console.error(describeError(error));
   }
   try {
+    await deps.stopAgentRuns();
+  } catch (error) {
+    console.error(describeError(error));
+  }
+  try {
     await deps.shutdownBrowser();
+  } catch (error) {
+    console.error(describeError(error));
+  }
+  try {
+    deps.flushEvents();
   } catch (error) {
     console.error(describeError(error));
   }
