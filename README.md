@@ -55,6 +55,15 @@ cargo run          # from /src-tauri: full product window
 # Optional: set your data dir (for the daring)
 export SABER_DATA_DIR=/tmp/i-know-what-i-m-doing
 
+# Project inventory (optional; the legacy Desktop path still works)
+export SABER_PROJECTS_FILE=/path/to/your/projects.json
+
+# Opencode config override for /api/default-model (optional)
+export SABER_OPENCODE_CONFIG=/path/to/opencode.jsonc
+
+# Only for deliberate remote/LAN setups — the local API is loopback-only by default
+export SABER_ALLOW_REMOTE_API=1
+
 # Pick your provider (Saber won't judge, but it will check)
 # codex login      (workspace-write with noninteractive approval refusal)
 # claude auth login (uses configured permissions)
@@ -71,13 +80,16 @@ export SABER_DATA_DIR=/tmp/i-know-what-i-m-doing
 saber/
 ├── src/                    # Main source code
 │   ├── server/            # API routes & handlers (our baby)
-│   └── server/providers/  # Pluggable adapter thingies
-├── src-tauri/             # Tauri build config + Rust
+│   ├── server/providers/  # Pluggable adapter thingies
+│   ├── components/        # React UI panes
+│   └── lib/               # Shared client types and helpers
+├── src-tauri/             # Tauri build config + Rust shell
 ├── docs/                  # Architecture, specs, roadmaps (exciting, right?)
 ├── scripts/               # Helpful automation scripts
-├── tests/                 # Vitest suite (21 tests pass — we checked)
-└── .github/              # GitHub Actions & workflows
+└── .github/               # GitHub Actions & workflows
 ```
+
+Tests live beside the code as `*.test.ts(x)` files and run with `bun run test` (250+ of them — CI checks every PR, on Linux, Windows, and macOS runners).
 
 ---
 
@@ -90,7 +102,7 @@ We [refactored the server into route modules](https://github.com/BimbitoPt/saber
 - **Fixed** the route-table generator to scan modules directly, eliminating a bogus `PATCH /api/terminals/:id` row the old heuristic invented
 - **Added** golden-set tests (`routeScan.test.ts`) that pin the route set (22 literals + 17 matchers) to catch drift. A forgotten route block will fail a test. You've been warned. 👀
 
-**Result**: All 21 tests pass. Behavior unchanged. Integrity preserved. 🛡️
+**Result**: The full suite passes. Behavior unchanged. Integrity preserved. 🛡️
 
 ---
 
