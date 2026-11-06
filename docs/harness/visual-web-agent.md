@@ -52,7 +52,7 @@ The harness is a closed loop:
 2. **Reference** — inspect the target site and supplied references. Identify composition, type scale, density, motion language, color, and interaction patterns. Do not copy assets or source.
 3. **Design contract** — write a compact page plan before coding: section order, visual hierarchy, responsive behavior, interaction states, motion, 3D role, and acceptance criteria.
 4. **Build** — implement the smallest coherent vertical slice. Prefer existing project conventions. Do not replace a working stack to satisfy a fashionable stack request.
-5. **Render** — start the real dev server and use Saber Browser to inspect desktop and mobile viewports. A successful compile is not visual verification.
+5. **Render** — start the real dev server and use Saber Browser when it is exposed to the agent session; otherwise use Playwright or browser automation available in the target workspace. A successful compile is not visual verification.
 6. **Critique** — score the rendered page against the rubric below. Record concrete defects with viewport, selector/region, severity, and evidence.
 7. **Repair** — fix the highest-impact defect first. Re-render after each meaningful batch. Maximum three critique/repair passes unless the user authorizes more.
 8. **Verify** — run project checks, inspect console/network failures where available, test interactions and responsive states, and report evidence plus remaining limitations.
@@ -110,7 +110,7 @@ Minimum: 30/40 overall, with no dimension below 3. A low score means repair, not
 
 ## Browser QA protocol
 
-Use the browser already exposed by Saber. Navigate to the local dev URL and inspect at:
+Use Saber Browser when it is exposed to the agent session. Otherwise use Playwright or browser automation already available in the target workspace. If no browser is available, state the limitation and do not claim visual verification. Navigate to the local dev URL and inspect at:
 
 - 1440 × 900 desktop
 - 1024 × 768 compact desktop/tablet

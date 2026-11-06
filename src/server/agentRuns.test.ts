@@ -37,6 +37,27 @@ function setup() {
 }
 
 describe("agent runs", () => {
+  it("automatically injects the visual-web harness for plain-language website tasks", () => {
+    const { store, task, spawn, service } = setup();
+    const updated = store.updateTask(task.id, {
+      title: "Build a premium 3D website for my car company",
+      spec: "Create a complete website with a cinematic vehicle experience.",
+      criteria: "Responsive, polished, and usable on mobile.",
+      expectedUpdatedAt: task.updatedAt,
+    });
+
+    const scope = service.assembleScope(updated, updated.project, adapter(spawn));
+
+    expect(scope.prompt).toContain("# Visual Web Skill");
+    expect(scope.prompt).toContain("# Visual Web Agent Harness");
+    expect(scope.prompt).toContain("# Visual Web Task Template");
+    expect(scope.contextSources).toEqual(expect.arrayContaining([
+      "visual-web skill",
+      "visual-web agent guide",
+      "visual-web task template",
+    ]));
+  });
+
   it("frames split output, captures native identity, and preserves separate follow-up attempts", async () => {
     const { store, task, child, spawn, service } = setup();
     store.updateTask(task.id, { context: "Check routes", draft: "next instruction", expectedUpdatedAt: task.updatedAt });
