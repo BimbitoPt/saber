@@ -5,8 +5,7 @@ import { getTaskStore, type TaskStore } from "./taskStore";
 import { getOrCreateApiToken, hasValidBearerToken } from "./apiToken";
 import { providerStatus } from "./providers/executables";
 import { GitWorkspaceService } from "./gitWorkspaces";
-import { getAgentRuns } from "./agentRuns";
-import { getTerminalLocks } from "./terminalLocks";
+import { workspaceActiveCheck } from "./workspaceGuards";
 import { openApiDocument } from "./openapi";
 
 const API_VERSION = "1.0.0";
@@ -214,7 +213,7 @@ export async function handleApiV1(request: Request, dependencies: ApiV1Dependenc
       if (!task.workspace || task.workspace.state !== "ready") return failure("conflict", "Task has no ready workspace to review.", 409, requestId);
       const review = await (dependencies.workspaceReview
         ? dependencies.workspaceReview(taskId)
-        : new GitWorkspaceService(store, (directory) => getAgentRuns().hasActiveWorkspace(directory) || getTerminalLocks().hasActiveWorkspace(store, directory), undefined, request.signal).review(taskId));
+        : new GitWorkspaceService(store, workspaceActiveCheck(store), undefined, request.signal).review(taskId));
       return envelope({ head: review.head, branch: review.branch, changedFileCount: review.status.split("\n").filter(Boolean).length });
     }
 
