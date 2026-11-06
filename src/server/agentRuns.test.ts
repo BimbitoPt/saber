@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TaskStore } from "./taskStore";
 import { AGENT_STOP_ESCALATION_MS, AgentRuns } from "./agentRuns";
+import { annotateQueuePositions } from "./runQueue";
 import { ProjectProfiles } from "./projectProfiles";
 import { TerminalLocks } from "./terminalLocks";
 import type { AgentProvider } from "./providers/types";
@@ -401,5 +402,190 @@ describe("agent runs", () => {
     await service.stop(orphan.id);
     expect(store.getRun(orphan.id)?.status).toBe("interrupted");
     expect(() => store.createRun(task.id, "another")).toThrow("interrupted");
+  });
+});
+
+describe("run queue", () => {
+  const savedLimit = process.env.SABER_MAX_ACTIVE_RUNS;
+  const makeChild = () => Object.assign(new EventEmitter(), { stdout: new PassThrough(), stderr: new PassThrough(), kill: vi.fn(() => true) });
+  let children: ReturnType<typeof makeChild>[] = [];
+
+  beforeEach(() => { children = []; });
+  afterEach(() => {
+    if (savedLimit === undefined) delete process.env.SABER_MAX_ACTIVE_RUNS;
+    else process.env.SABER_MAX_ACTIVE_RUNS = savedLimit;
+  });
+
+  class FlippableLocks extends TerminalLocks {
+    blocked = new Set<string>();
+    override hasActiveWorkspace(store: TaskStore, workdir: string): boolean {
+      return this.blocked.has(workdir) || super.hasActiveWorkspace(store, workdir);
+    }
+  }
+
+  function queueSetup() {
+    const store = new TaskStore(":memory:");
+    stores.push(store);
+    const task = store.createTask({ project: join(tmpdir(), "saber-queue-first"), title: "First", spec: "Do the work", criteria: "Prove it" });
+    const spawn = vi.fn<AgentProvider["spawn"]>(() => {
+      const child = makeChild();
+      children.push(child);
+      return child as unknown as ReturnType<AgentProvider["spawn"]>;
+    });
+    const service = new AgentRuns(store, () => adapter(spawn), (prompt) => prompt);
+    return { store, task, spawn, service };
+  }
+
+  const secondTask = (store: TaskStore, project: string) =>
+    store.createTask({ project, title: "Second", spec: "Do the work", criteria: "Prove it" });
+
+  it("queues beyond the active-run limit without spawning and promotes on settle", async () => {
+    process.env.SABER_MAX_ACTIVE_RUNS = "1";
+    const { store, task, spawn, service } = queueSetup();
+    const second = secondTask(store, join(tmpdir(), "saber-queue-second"));
+    const a = await service.start(task.id);
+    const b = await service.start(second.id);
+    expect(store.getRun(a)).toMatchObject({ status: "running" });
+    expect(store.getRun(b)).toMatchObject({ status: "queued", launch: { followup: false } });
+    expect(spawn).toHaveBeenCalledTimes(1);
+    expect(store.events(b, 0).lines[0]).toContain("run_queued");
+    const listed = annotateQueuePositions(store.listRuns());
+    expect(listed.find((run) => run.id === b)?.queuePosition).toBe(1);
+    children[0].emit("close", 0);
+    await service.recoverQueued();
+    expect(store.getRun(a)?.status).toBe("done");
+    expect(store.getRun(b)?.status).toBe("running");
+    expect(spawn.mock.calls[1][0]).toMatchObject({ workdir: second.project });
+    expect(store.events(b, 0).lines.some((line) => line.includes("run_promoted"))).toBe(true);
+    children[1].emit("close", 0);
+    expect(store.getRun(b)?.status).toBe("done");
+  });
+
+  it("keeps strict FIFO order and rejects a second run for a queued workspace", async () => {
+    process.env.SABER_MAX_ACTIVE_RUNS = "1";
+    const { store, task, service } = queueSetup();
+    const second = secondTask(store, join(tmpdir(), "saber-queue-b"));
+    const third = secondTask(store, join(tmpdir(), "saber-queue-c"));
+    const a = await service.start(task.id);
+    const b = await service.start(second.id);
+    await expect(service.start(second.id)).rejects.toThrow("A queued run already owns this workspace");
+    const c = await service.start(third.id);
+    expect(store.getRun(c)?.status).toBe("queued");
+    const listed = annotateQueuePositions(store.listRuns());
+    expect(listed.find((run) => run.id === b)?.queuePosition).toBe(1);
+    expect(listed.find((run) => run.id === c)?.queuePosition).toBe(2);
+    children[0].emit("close", 0);
+    await service.recoverQueued();
+    expect(store.getRun(b)?.status).toBe("running");
+    expect(store.getRun(c)?.status).toBe("queued");
+  });
+
+  it("cancels a queued run without spawning and keeps queued distinct from settled states", async () => {
+    process.env.SABER_MAX_ACTIVE_RUNS = "1";
+    const { store, task, spawn, service } = queueSetup();
+    const second = secondTask(store, join(tmpdir(), "saber-queue-cancel"));
+    const a = await service.start(task.id);
+    const b = await service.start(second.id);
+    await service.stop(b);
+    expect(store.getRun(b)).toMatchObject({ status: "stopped" });
+    expect(spawn).toHaveBeenCalledTimes(1);
+    expect(store.events(b, 0).lines.some((line) => line.includes("run_cancelled"))).toBe(true);
+    expect(() => store.finishRun(b, "done", 0)).toThrow("Cannot change run from stopped");
+    // Cancellation releases the workspace: a fresh request is accepted even while a stays active.
+    const requeued = await service.start(second.id);
+    expect(store.getRun(requeued)).toMatchObject({ status: "queued" });
+    expect(spawn).toHaveBeenCalledTimes(1);
+    children[0].emit("close", 0);
+    await service.recoverQueued();
+    expect(store.getRun(requeued)?.status).toBe("running");
+    expect(spawn).toHaveBeenCalledTimes(2);
+  });
+
+  it("recovers queued work after restart without duplicating launches or retrying interrupted runs", async () => {
+    process.env.SABER_MAX_ACTIVE_RUNS = "1";
+    const { store, task, spawn, service } = queueSetup();
+    const second = secondTask(store, join(tmpdir(), "saber-queue-restart"));
+    const a = await service.start(task.id);
+    const b = await service.start(second.id);
+    store.finishRun(a, "interrupted", null);
+    const restarted = new AgentRuns(store, () => adapter(spawn), (prompt) => prompt);
+    await restarted.recoverQueued();
+    expect(store.getRun(a)?.status).toBe("interrupted");
+    expect(store.getRun(b)?.status).toBe("running");
+    expect(spawn).toHaveBeenCalledTimes(2);
+    expect(spawn.mock.calls[1][0]).toMatchObject({ workdir: second.project });
+    children[1].emit("close", 0);
+    expect(store.getRun(b)?.status).toBe("done");
+  });
+
+  it("keeps a terminal-blocked queued run waiting while promoting other eligible work", async () => {
+    process.env.SABER_MAX_ACTIVE_RUNS = "1";
+    const { store, task, spawn } = queueSetup();
+    const second = secondTask(store, join(tmpdir(), "saber-queue-blocked"));
+    const third = secondTask(store, join(tmpdir(), "saber-queue-free"));
+    // A terminal claiming a workspace after a run was accepted is not reachable
+    // through the public guards; simulate that state to prove promotion waits.
+    const locks = new FlippableLocks();
+    const guarded = new AgentRuns(store, () => adapter(spawn), (prompt) => prompt, locks);
+    const a = await guarded.start(task.id);
+    const b = await guarded.start(second.id);
+    const c = await guarded.start(third.id);
+    expect(store.getRun(b)).toMatchObject({ status: "queued" });
+    locks.blocked.add(second.project);
+    children[0].emit("close", 0);
+    await guarded.recoverQueued();
+    expect(store.getRun(b)?.status).toBe("queued");
+    expect(store.getRun(c)?.status).toBe("running");
+    locks.blocked.clear();
+    children[1].emit("close", 0);
+    await guarded.recoverQueued();
+    expect(store.getRun(b)?.status).toBe("running");
+  });
+
+  it("settles a promoted run as failed when its provider cannot spawn and keeps the queue moving", async () => {
+    process.env.SABER_MAX_ACTIVE_RUNS = "1";
+    const { store, task, spawn, service } = queueSetup();
+    const second = secondTask(store, join(tmpdir(), "saber-queue-fail"));
+    const third = secondTask(store, join(tmpdir(), "saber-queue-after"));
+    const a = await service.start(task.id);
+    const b = await service.start(second.id);
+    const c = await service.start(third.id);
+    spawn.mockImplementationOnce(() => { throw new Error("executable missing at promotion"); });
+    children[0].emit("close", 0);
+    await service.recoverQueued();
+    expect(store.getRun(b)?.status).toBe("error");
+    expect(store.getRun(c)?.status).toBe("running");
+    expect(store.events(b, 0).lines.some((line) => line.includes("executable missing at promotion"))).toBe(true);
+  });
+
+  it("replays readOnly and followup launch options when promoting queued runs", async () => {
+    process.env.SABER_MAX_ACTIVE_RUNS = "1";
+    const { store, task, spawn, service } = queueSetup();
+    const review = secondTask(store, join(tmpdir(), "saber-queue-readonly"));
+    const a = await service.start(task.id);
+    const readOnlyRun = await service.start(review.id, { readOnly: true });
+    expect(store.getRun(readOnlyRun)).toMatchObject({ status: "queued", launch: { readOnly: true } });
+    children[0].emit("close", 0);
+    await service.recoverQueued();
+    expect(spawn.mock.calls[1][0]).toMatchObject({ workdir: review.project, readOnly: true });
+    children[1].emit("close", 0);
+    await service.recoverQueued();
+
+    const holder = secondTask(store, join(tmpdir(), "saber-queue-holder"));
+    const hold = await service.start(holder.id);
+    children[2].stdout.write(Buffer.from('{"sessionID":"captured-session","type":"step_start"}\n'));
+    children[2].emit("close", 0);
+    expect(store.getRun(hold)?.nativeSessionId).toBe("captured-session");
+
+    const blocker = secondTask(store, join(tmpdir(), "saber-queue-blocker"));
+    const blocking = await service.start(blocker.id);
+    expect(store.getRun(blocking)?.status).toBe("running");
+
+    const followup = await service.start(holder.id, { followup: "next instruction" });
+    expect(store.getRun(followup)).toMatchObject({ status: "queued", launch: { followup: true } });
+    children[3].emit("close", 0);
+    await service.recoverQueued();
+    expect(spawn.mock.calls[4][0]).toMatchObject({ session: "captured-session" });
+    expect(spawn.mock.calls[4][0].task).toBe(store.getRun(followup)?.task);
   });
 });

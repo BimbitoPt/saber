@@ -4,6 +4,7 @@ import { getAgentRuns } from "../agentRuns";
 import { GitWorkspaceService, taskWorkdir } from "../gitWorkspaces";
 import { getTerminalLocks } from "../terminalLocks";
 import { workspaceActiveCheck } from "../workspaceGuards";
+import { annotateQueuePositions } from "../runQueue";
 import { createVerificationRecord, summarizeVerification } from "../../lib/verification";
 import type { TaskInput, TaskPatch, ProviderId, ScopePreview } from "../../lib/tasks";
 import { providerStatus } from "../providers/executables";
@@ -117,7 +118,7 @@ export const handle: RouteHandler = async (ctx) => {
     } catch (error) { return errorResponse(error, 400); }
   }
   if (taskRuns && request.method === "GET") {
-    return jsonResponse(getTaskStore().listRuns(taskRuns[1]));
+    return jsonResponse(annotateQueuePositions(getTaskStore().listRuns(taskRuns[1])));
   }
   const runReviewMatch = /^\/api\/tasks\/([^/]+)\/runs\/([^/]+)\/(review|merge)$/.exec(path);
   if (runReviewMatch && runReviewMatch[3] === "review" && request.method === "GET") {

@@ -50,6 +50,17 @@ describe("terminal workspace locks", () => {
     }
   });
 
+  it("keeps a queued agent workspace locked until the run is cancelled or promoted", () => {
+    const store = new TaskStore(":memory:");
+    try {
+      const task = store.createTask({ project: workspacePath("queued"), title: "Queued", spec: "Work", criteria: "Done" });
+      store.createRun(task.id, "Run agent", undefined, "opencode", undefined, {}, undefined, { status: "queued" });
+      expect(() => new TerminalLocks().reserve(store, task.id, task.project)).toThrow("A queued run owns this workspace");
+    } finally {
+      store.close();
+    }
+  });
+
   it("rehydrates terminal ownership and keeps missing native sessions locked until explicit recovery", () => {
     const store = new TaskStore(":memory:");
     try {

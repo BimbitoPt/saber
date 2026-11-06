@@ -36,7 +36,7 @@ export const openApiDocument = {
     "/api/v1/tasks/{taskId}/runs": { ...get("List runs for a task", data(collection(run))), parameters: [taskParameter, ...pageParameters] },
     "/api/v1/runs/{runId}": { ...get("Read run metadata", data(run)), parameters: [runParameter] },
     "/api/v1/runs/{runId}/events": { ...get("Read safe run event summaries from a sequence cursor", data({ type: "object", required: ["status", "nextCursor", "events", "hasMore"], properties: {
-      status: { enum: ["running", "done", "stopped", "error", "interrupted"] }, nextCursor: { type: "integer", minimum: 0 },
+      status: { enum: ["queued", "running", "done", "stopped", "error", "interrupted"] }, nextCursor: { type: "integer", minimum: 0 },
       events: { type: "array", items: { type: "object", required: ["sequence", "type", "provider", "categories"], properties: {
         sequence: { type: "integer", minimum: 1 }, type: { enum: ["provider_event", "diagnostic"] }, provider: { type: ["string", "null"], enum: ["opencode", "codex", "claude", null] },
         categories: { type: "array", items: { enum: ["agent_message", "tool", "meta"] } },
@@ -52,7 +52,7 @@ export const openApiDocument = {
     } },
     Run: { type: "object", required: ["id", "taskId", "provider", "model", "specRevision", "status", "eventCount", "startedAt", "endedAt", "exitCode"], properties: {
       id, taskId: id, provider: { enum: ["opencode", "codex", "claude"] }, model: { type: ["string", "null"] }, specRevision: { type: "integer", minimum: 1 },
-      status: { enum: ["running", "done", "stopped", "error", "interrupted"] }, eventCount: { type: "integer", minimum: 0 }, startedAt: { type: "string", format: "date-time" },
+      status: { enum: ["queued", "running", "done", "stopped", "error", "interrupted"] }, eventCount: { type: "integer", minimum: 0 }, startedAt: { type: "string", format: "date-time" },
       endedAt: { type: ["string", "null"], format: "date-time" }, exitCode: { type: ["integer", "null"] },
     } },
     Verification: { type: "object", required: ["id", "taskId", "criterionId", "criterionText", "revision", "outcome", "check", "evidence", "runId", "checkedAt"], properties: {

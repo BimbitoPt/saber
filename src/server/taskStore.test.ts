@@ -57,6 +57,43 @@ describe("persistent tasks", () => {
     expect(reopened.listRuns(second.id)).toHaveLength(1);
   });
 
+  it("persists queued runs with their launch plan and keeps their workspace claimed", () => {
+    const { store } = setup();
+    const first = store.createTask(input);
+    const sameWorkspace = store.createTask({ ...input, title: "Same project" });
+    const queued = store.createRun(first.id, "queued work", "queued-model", "opencode", undefined, {}, undefined, {
+      status: "queued", launch: { readOnly: true, followup: false },
+    });
+    expect(store.getRun(queued.id)).toMatchObject({ status: "queued", launch: { readOnly: true, followup: false }, model: "queued-model" });
+    expect(store.getRun(queued.id)?.endedAt).toBeUndefined();
+    expect(() => store.createRun(sameWorkspace.id, "second request")).toThrow("A queued run already owns this workspace");
+    expect(() => store.finishRun(queued.id, "done", 0)).toThrow("Cannot change run from queued to done");
+    expect(() => store.finishRun(queued.id, "running", null)).toThrow("Cannot change run from queued to running");
+    const promoted = store.promoteRun(queued.id);
+    expect(promoted.status).toBe("running");
+    expect(store.getRun(queued.id)?.endedAt).toBeUndefined();
+    expect(() => store.promoteRun(queued.id)).toThrow("Cannot promote a run from running");
+    expect(() => store.promoteRun("missing-run")).toThrow("Run not found");
+    store.finishRun(queued.id, "done", 0);
+    expect(() => store.promoteRun(queued.id)).toThrow("Cannot promote a run from done");
+  });
+
+  it("keeps queued work queued across a restart while marking running work interrupted", () => {
+    const { store, path } = setup();
+    const running = store.createTask(input);
+    const queuedTask = store.createTask({ ...input, project: join(tmpdir(), "saber-queue-restart-store"), title: "Queued" });
+    const activeRun = store.createRun(running.id, "running work");
+    const queuedRun = store.createRun(queuedTask.id, "queued work", undefined, "opencode", undefined, {}, undefined, {
+      status: "queued", launch: { readOnly: true },
+    });
+    store.close();
+    const reopened = new TaskStore(path);
+    stores.push(reopened);
+    expect(reopened.getRun(activeRun.id)?.status).toBe("interrupted");
+    expect(reopened.getRun(queuedRun.id)).toMatchObject({ status: "queued", launch: { readOnly: true } });
+    expect(reopened.promoteRun(queuedRun.id).status).toBe("running");
+  });
+
   it("pages more than 2000 events without cursor loss", () => {
     const { store } = setup();
     const task = store.createTask(input);
