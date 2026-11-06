@@ -4,12 +4,29 @@ import { getTaskStore } from "../taskStore";
 import { getAgentRuns } from "../agentRuns";
 import { providerStatus } from "../providers/executables";
 import { resolveWorkdir } from "./shared";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { RouteHandler } from "./types";
 
 interface StartSessionBody {
   project?: unknown;
   task?: unknown;
   model?: unknown;
+}
+
+async function readOpencodeConfig(): Promise<string> {
+  const fs = await import("node:fs");
+  const override = process.env["SABER_OPENCODE_CONFIG"];
+  if (override) return fs.promises.readFile(override, "utf8");
+  const base = join(homedir(), ".config", "opencode");
+  for (const name of ["opencode.jsonc", "opencode.json"]) {
+    try {
+      return await fs.promises.readFile(join(base, name), "utf8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
+  throw new Error("No opencode config file was found");
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -108,12 +125,7 @@ export const handle: RouteHandler = async (ctx) => {
 
   if (path === "/api/default-model" && request.method === "GET") {
     try {
-      const jsonc = await import("node:fs").then((fs) =>
-        fs.promises.readFile(
-          process.env["USERPROFILE"] + "\\.config\\opencode\\opencode.jsonc",
-          "utf8",
-        ),
-      );
+      const jsonc = await readOpencodeConfig();
       const match = /["']?model["']?\s*:\s*["']([^"']+)["']/.exec(jsonc);
       return jsonResponse({ default: match?.[1] ?? "opencode built-in default (per auth provider)" });
     } catch (error) {
