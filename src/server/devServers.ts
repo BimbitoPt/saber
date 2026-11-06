@@ -216,7 +216,7 @@ export class DevServerManager {
       throw error;
     }
 
-    const entry: Entry = { project, port, state: "starting", startedAt: this.deps.now(), proc, logs: [], logTotal: 0, logPartial: "" };
+    const entry: Entry = { project, port, state: "starting", startedAt: this.deps.now(), proc, logs: [], logTotal: 0, logPartial: { stdout: "", stderr: "" } };
     this.entries.set(name, entry);
     // The entry now reserves its port, so the allocation reservation can be released.
     this.reserved.delete(port);
