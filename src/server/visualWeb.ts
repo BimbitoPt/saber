@@ -8,11 +8,11 @@ type VisualWebTask = {
   criteria: string;
 };
 
-const visualWebSignal = /\\b(?:website|web site|landing page|home ?page|portfolio(?: site)?|marketing site|product site|e-?commerce|online store|storefront|frontend|front-end|web design|three\\.?js|react three fiber|3d (?:site|website|web site|experience))\\b/i;
-const buildSiteSignal = /\\b(?:build|create|design|redesign|make)\\b[\\s\\S]{0,80}\\b(?:site|website|web site)\\b/i;
+const visualWebSignal = /\b(?:website|web site|landing page|home ?page|portfolio(?: site)?|marketing site|product site|e-?commerce|online store|storefront|frontend|front-end|web design|three\.?js|react three fiber|3d (?:site|website|web site|experience))\b/i;
+const buildSiteSignal = /\b(?:build|create|design|redesign|make)\b[\s\S]{0,80}\b(?:site|website|web site)\b/i;
 
 export function isVisualWebTask(task: VisualWebTask, followup?: string): boolean {
-  const prompt = [task.title, task.spec, task.criteria, followup ?? ""].join("\\n");
+  const prompt = [task.title, task.spec, task.criteria, followup ?? ""].join("\n");
   return visualWebSignal.test(prompt) || buildSiteSignal.test(prompt);
 }
 
@@ -25,7 +25,7 @@ export function visualWebContext(task: VisualWebTask, followup?: string): Array<
       text: [
         "The following canonical Saber visual-web skill is injected by the runtime. It applies even when the target workspace does not contain the Saber documentation files.",
         visualWebSkill.trim(),
-      ].join("\\n\\n"),
+      ].join("\n\n"),
     },
     { name: "visual-web agent guide", text: visualWebGuide.trim() },
     { name: "visual-web task template", text: visualWebTaskTemplate.trim() },
