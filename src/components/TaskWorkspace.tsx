@@ -99,7 +99,10 @@ export function TaskWorkspace() {
         setOpenedTerminalTasks(new Set(sessions.filter((session) => session.status !== "stopped").map((session) => session.taskId)));
         setTerminalReady(true);
       } catch (cause) {
-        if (!cancelled) setTerminalStartupError(String(cause));
+        if (!cancelled) {
+          setTerminalStartupError(String(cause));
+          setTerminalReady(true);
+        }
       }
     };
     void initialize();
