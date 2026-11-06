@@ -12,12 +12,20 @@ const mocks = vi.hoisted(() => ({
   reconcileSessions: vi.fn(),
 }));
 
-vi.mock("../lib/api", () => ({
-  createTask: vi.fn(),
-  listProjects: () => mocks.listProjects(),
-  listTasks: () => mocks.listTasks(),
-  reconcileTerminalSessions: (...args: unknown[]) => mocks.reconcileSessions(...args),
-}));
+vi.mock("../lib/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/api")>();
+  return {
+    ...actual,
+    listProjects: () => mocks.listProjects(),
+    listTasks: () => mocks.listTasks(),
+    reconcileTerminalSessions: (...args: unknown[]) => mocks.reconcileSessions(...args),
+    listProviders: vi.fn(async () => []),
+    listTaskRuns: vi.fn(async () => []),
+    listVerifications: vi.fn(async () => ({ records: [], summary: { passed: 0, failed: 0, stale: 0, total: 0, state: "unverified" } })),
+    getProjectProfile: vi.fn(async () => null),
+    listRoles: vi.fn(async () => []),
+  };
+});
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(async (command: string) => command === "terminal_list" ? [] : undefined),
@@ -31,7 +39,7 @@ vi.mock("./TerminalSurface", async () => {
       active: boolean;
       session?: { id: string; status: string };
       startOnOpen: boolean;
-      onSessionChange: (session: { id: string; taskId: string; workdir: string; status: "running"; createdAt: number; startedAt: number }) => void;
+      onSessionChange: (session: { id: string; taskId: string; workdir: string; status: "running" | "stopped"; createdAt: number; startedAt: number }) => void;
     }) => {
       React.useEffect(() => {
         mocks.mounts[task.id] = (mocks.mounts[task.id] ?? 0) + 1;
@@ -41,10 +49,17 @@ vi.mock("./TerminalSurface", async () => {
         }
         return () => { mocks.unmounts[task.id] = (mocks.unmounts[task.id] ?? 0) + 1; };
       }, [task.id]);
-      return React.createElement("div", {
-        "data-testid": "terminal-" + task.id,
-        "data-active": String(active),
-      }, "SABER-" + task.id + "-MARKER");
+      return React.createElement(
+        "div",
+        {
+          "data-testid": "terminal-" + task.id,
+          "data-active": String(active),
+        },
+        "SABER-" + task.id + "-MARKER",
+        session?.status === "running"
+          ? React.createElement("button", { onClick: () => onSessionChange({ id: "session-" + task.id, taskId: task.id, workdir: task.project, status: "stopped", createdAt: 1, startedAt: 2 }) }, "STOP-SESSION")
+          : null,
+      );
     },
   };
 });
@@ -125,11 +140,24 @@ describe("TaskWorkspace terminal view lifecycle", () => {
     await clickButton("Terminal");
 
     const taskAMarker = document.querySelector('[data-testid="terminal-task-a"]');
-    expect(taskAMarker?.textContent).toBe("SABER-task-a-MARKER");
+    expect(taskAMarker?.textContent).toContain("SABER-task-a-MARKER");
     expect(taskAMarker?.getAttribute("data-active")).toBe("true");
     expect(mocks.mounts["task-a"]).toBe(1);
     expect(mocks.unmounts["task-a"] ?? 0).toBe(0);
     expect(mocks.starts["task-a"]).toBe(1);
     expect(mocks.starts["task-b"]).toBe(1);
+  });
+
+  it("does not relaunch a stopped terminal when the view is left and revisited", async () => {
+    await clickButton("Start terminal");
+    expect(mocks.starts["task-a"]).toBe(1);
+
+    await clickButton("STOP-SESSION");
+    await clickButton("List");
+    expect(mocks.unmounts["task-a"]).toBe(1);
+
+    await clickButton("Terminal");
+    expect(mocks.mounts["task-a"]).toBe(2);
+    expect(mocks.starts["task-a"]).toBe(1);
   });
 });

@@ -119,6 +119,12 @@ export function TaskWorkspace() {
   function updateTerminalSession(session: TerminalSessionRecord) {
     setTerminalSessions((old) => [session, ...old.filter((item) => item.id !== session.id)]);
     setOpenedTerminalTasks((old) => new Set(old).add(session.taskId));
+    setTerminalStartRequests((old) => {
+      if (!old.has(session.taskId)) return old;
+      const next = new Set(old);
+      next.delete(session.taskId);
+      return next;
+    });
   }
 
   function terminalSession(taskId: string) {
