@@ -50,4 +50,21 @@ describe("HTTP error response safety", () => {
 
     expect(await response.json()).toEqual({ error: "Project path is invalid." });
   });
+
+  it("passes clean validation messages through to the client", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const response = routeError(new Error("Choose an absolute project directory"));
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "Choose an absolute project directory" });
+  });
+
+  it("masks oversized or non-Error rejection values", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const oversized = routeError(new Error("x".repeat(301)));
+    const nonError = routeError("Select a project before saving");
+
+    expect(await oversized.json()).toEqual({ error: "The request could not be completed." });
+    expect(await nonError.json()).toEqual({ error: "The request could not be completed." });
+  });
 });
