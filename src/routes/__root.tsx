@@ -1,9 +1,13 @@
 import { createRootRoute, Link, Outlet, HeadContent, Scripts } from "@tanstack/react-router";
 import { type ReactNode } from "react";
 import { Terminal } from "lucide-react";
+import { WEBVIEW_CSP } from "../lib/csp";
 import "../styles/app.css";
 
 export const Route = createRootRoute({
+  head: () => ({
+    meta: [{ httpEquiv: "Content-Security-Policy", content: WEBVIEW_CSP }],
+  }),
   component: RootComponent,
 });
 
