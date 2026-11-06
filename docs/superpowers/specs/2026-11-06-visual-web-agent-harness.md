@@ -19,8 +19,9 @@ Saber orchestrates coding agents, but frontend quality is still too dependent on
 ## Scope and exclusions
 
 In scope:
-- A reusable project-local `visual-web` skill.
-- A detailed visual harness guide and task template.
+- A reusable project-local `visual-web` skill designed for plain-language, nontechnical prompts.
+- Autonomous brief interpretation, assumption handling, and agent-owned technical decisions.
+- A detailed visual harness guide and task template that do not require users to fill in technical specifications.
 - Saber-level AGENTS.md routing so frontend tasks discover the skill.
 - A deterministic verification script and package command.
 
@@ -39,6 +40,10 @@ Out of scope:
 - VIS-HARNESS-04: The task template captures the design contract and evidence.
 - VIS-HARNESS-05: `bun run verify:visual-harness` checks required files and core sections.
 - VIS-HARNESS-06: Existing Saber stack remains unchanged; Next.js 16/Tailwind 4 guidance applies to target projects that explicitly request it.
+- VIS-HARNESS-07: A vague plain-language request is sufficient to start; the agent derives the creative brief and does not require the user to specify technical choices.
+- VIS-HARNESS-08: The agent delivers a working website, not only a plan or scaffold, and owns implementation, asset strategy, responsive behavior, and browser verification.
+- VIS-HARNESS-09: Missing non-blocking details are handled with visible, editable assumptions; factual claims and unavailable assets are never fabricated.
+- VIS-HARNESS-10: 3D experiences include a meaningful scene, mobile fallback, and graceful behavior when WebGL or high-quality assets are unavailable.
 
 ## Data and lifecycle
 
