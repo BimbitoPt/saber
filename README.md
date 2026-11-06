@@ -64,6 +64,9 @@ export SABER_OPENCODE_CONFIG=/path/to/opencode.jsonc
 # Only for deliberate remote/LAN setups — the local API is loopback-only by default
 export SABER_ALLOW_REMOTE_API=1
 
+# Max concurrent agent runs before new work is queued (default 2, range 1-16)
+export SABER_MAX_ACTIVE_RUNS=2
+
 # Pick your provider (Saber won't judge, but it will check)
 # codex login      (workspace-write with noninteractive approval refusal)
 # claude auth login (uses configured permissions)

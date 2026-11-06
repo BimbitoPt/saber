@@ -21,10 +21,12 @@ export class TerminalLocks {
 
   reserve(store: TaskStore, taskId: string, workdir: string): TerminalLock {
     const runConflict = store.listRuns().find((run) =>
-      ["running", "interrupted"].includes(run.status) && workspacesOverlap(run.project, workdir));
+      ["running", "interrupted", "queued"].includes(run.status) && workspacesOverlap(run.project, workdir));
     if (runConflict) throw new Error(runConflict.status === "interrupted"
       ? "An interrupted run owns this workspace. Confirm its old process has stopped before opening a terminal."
-      : "An agent run is already using this workspace. Wait or stop it before opening a terminal.");
+      : runConflict.status === "queued"
+        ? "A queued run owns this workspace. Cancel it or wait for promotion before opening a terminal."
+        : "An agent run is already using this workspace. Wait or stop it before opening a terminal.");
     if (this.hasActiveWorkspace(store, workdir)) throw new Error("Another terminal session is already using this workspace.");
 
     const lock = { id: crypto.randomUUID(), taskId, workdir, createdAt: Date.now() };

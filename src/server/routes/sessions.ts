@@ -2,6 +2,7 @@ import { jsonResponse, errorResponse, routeError } from "../http";
 import { describeError } from "../../lib/error-capture";
 import { getTaskStore } from "../taskStore";
 import { getAgentRuns } from "../agentRuns";
+import { annotateQueuePositions } from "../runQueue";
 import { providerStatus } from "../providers/executables";
 import { resolveWorkdir } from "./shared";
 import { homedir } from "node:os";
@@ -66,7 +67,7 @@ export const handle: RouteHandler = async (ctx) => {
   }
 
   if (path === "/api/sessions" && request.method === "GET") {
-    return jsonResponse(getTaskStore().listRuns());
+    return jsonResponse(annotateQueuePositions(getTaskStore().listRuns()));
   }
 
   if (path === "/api/sessions" && request.method === "POST") {

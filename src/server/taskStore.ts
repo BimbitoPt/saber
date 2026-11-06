@@ -245,10 +245,12 @@ export class TaskStore {
         item.status !== "stopped" && workspacesOverlap(item.workdir, record.workdir));
       if (active) throw new Error("Another terminal session is already using this workspace.");
       const runConflict = this.listRuns().find((run) =>
-        ["running", "interrupted"].includes(run.status) && workspacesOverlap(run.project, record.workdir));
+        ["running", "interrupted", "queued"].includes(run.status) && workspacesOverlap(run.project, record.workdir));
       if (runConflict) throw new Error(runConflict.status === "interrupted"
         ? "An interrupted run owns this workspace. Confirm its old process has stopped before opening a terminal."
-        : "An agent run is already using this workspace. Wait or stop it before opening a terminal.");
+        : runConflict.status === "queued"
+          ? "A queued run owns this workspace. Cancel it or wait for promotion before opening a terminal."
+          : "An agent run is already using this workspace. Wait or stop it before opening a terminal.");
       this.db.prepare("INSERT INTO terminal_sessions VALUES (?, ?, ?)").run(record.id, record.taskId, JSON.stringify(record));
       this.db.exec("COMMIT");
       return record;
@@ -529,7 +531,7 @@ export class TaskStore {
     });
   }
 
-  createRun(taskId: string, prompt: string, model?: string, provider: ProviderId = "opencode", workdir?: string, capture: RunContextCapture = {}, runId?: string): RunRecord {
+  createRun(taskId: string, prompt: string, model?: string, provider: ProviderId = "opencode", workdir?: string, capture: RunContextCapture = {}, runId?: string, initial?: { status: "queued"; launch?: { readOnly?: boolean; followup?: boolean } }): RunRecord {
     const task = this.getTask(taskId);
     if (!task) throw new Error("Task not found");
     const project = workdir ?? task.workspace?.path ?? task.project;
@@ -543,7 +545,8 @@ export class TaskStore {
       contextNotice: capture.contextNotice,
       onyxContextSha: capture.onyxContextSha, onyxProvenance: capture.onyxProvenance,
       onyxNotice: capture.onyxNotice,
-      status: "running", eventCount: 0,
+      launch: initial?.launch,
+      status: initial?.status ?? "running", eventCount: 0,
       startedAt: Date.now(), exitCode: null,
     };
     this.db.exec("BEGIN IMMEDIATE");
@@ -552,10 +555,12 @@ export class TaskStore {
         session.status !== "stopped" && workspacesOverlap(session.workdir, project));
       if (terminalConflict) throw new Error("An interactive terminal owns this workspace. Close it before launching an agent run.");
       const conflict = this.listRuns().find((existing) =>
-        ["running", "interrupted"].includes(existing.status) && workspacesOverlap(existing.project, project));
+        ["running", "interrupted", "queued"].includes(existing.status) && workspacesOverlap(existing.project, project));
       if (conflict) throw new Error(conflict.status === "interrupted"
         ? "An interrupted run owns this workspace. Confirm its old process has stopped before retrying."
-        : "Another run is already using this workspace. Wait or stop it before launching.");
+        : conflict.status === "queued"
+          ? "A queued run already owns this workspace. Cancel it or wait for promotion before launching again."
+          : "Another run is already using this workspace. Wait or stop it before launching.");
       this.db.prepare("INSERT INTO runs VALUES (?, ?, ?)").run(run.id, taskId, JSON.stringify(run));
       this.db.exec("COMMIT");
       return run;
@@ -578,6 +583,7 @@ export class TaskStore {
     const run = this.getRun(id);
     if (!run) return undefined;
     const allowed: Record<RunStatus, RunStatus[]> = {
+      queued: ["stopped"],
       running: ["done", "stopped", "error", "interrupted"],
       interrupted: ["stopped"],
       done: [],
@@ -587,6 +593,16 @@ export class TaskStore {
     if (run.status === status) return run;
     if (!allowed[run.status].includes(status)) throw new Error(`Cannot change run from ${run.status} to ${status}`);
     const updated = { ...run, status, exitCode, endedAt: Date.now() };
+    this.writeRun(updated);
+    return updated;
+  }
+
+  /** Promote a queued run to running when the queue grants it a process slot. */
+  promoteRun(id: string): RunRecord {
+    const run = this.getRun(id);
+    if (!run) throw new Error("Run not found");
+    if (run.status !== "queued") throw new Error(`Cannot promote a run from ${run.status} to running`);
+    const updated: RunRecord = { ...run, status: "running" };
     this.writeRun(updated);
     return updated;
   }

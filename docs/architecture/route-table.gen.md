@@ -10,25 +10,25 @@ Found 40 routes.
 | --- | --- | --- |
 | * | `/^\/api\/project-revisions\/([^/]+)(\/approve|\/discard)?$/` | src/server/routes/projects.ts:72 |
 | * | `/^\/api\/roles\/([^/]+)$/` | src/server/routes/roles.ts:27 |
-| * | `/^\/api\/sessions\/([^/]+)\/acknowledge$/` | src/server/routes/sessions.ts:53 |
-| * | `/^\/api\/sessions\/([^/]+)\/events$/` | src/server/routes/sessions.ts:101 |
-| * | `/^\/api\/sessions\/([^/]+)\/followup$/` | src/server/routes/sessions.ts:118 |
-| * | `/^\/api\/sessions\/([^/]+)\/stop$/` | src/server/routes/sessions.ts:109 |
-| * | `/^\/api\/tasks\/([^/]+)\/runs\/([^/]+)\/(review|merge)$/` | src/server/routes/tasks.ts:122 |
-| * | `/^\/api\/tasks\/([^/]+)\/runs\/preview$/` | src/server/routes/tasks.ts:108 |
-| * | `/^\/api\/tasks\/([^/]+)\/runs$/` | src/server/routes/tasks.ts:107 |
+| * | `/^\/api\/sessions\/([^/]+)\/acknowledge$/` | src/server/routes/sessions.ts:54 |
+| * | `/^\/api\/sessions\/([^/]+)\/events$/` | src/server/routes/sessions.ts:102 |
+| * | `/^\/api\/sessions\/([^/]+)\/followup$/` | src/server/routes/sessions.ts:119 |
+| * | `/^\/api\/sessions\/([^/]+)\/stop$/` | src/server/routes/sessions.ts:110 |
+| * | `/^\/api\/tasks\/([^/]+)\/runs\/([^/]+)\/(review|merge)$/` | src/server/routes/tasks.ts:123 |
+| * | `/^\/api\/tasks\/([^/]+)\/runs\/preview$/` | src/server/routes/tasks.ts:109 |
+| * | `/^\/api\/tasks\/([^/]+)\/runs$/` | src/server/routes/tasks.ts:108 |
 | * | `/^\/api\/tasks\/([^/]+)\/teams(\/plan)?$/` | src/server/routes/roles.ts:38 |
-| * | `/^\/api\/tasks\/([^/]+)\/terminals$/` | src/server/routes/tasks.ts:79 |
-| * | `/^\/api\/tasks\/([^/]+)\/verifications$/` | src/server/routes/tasks.ts:33 |
-| * | `/^\/api\/tasks\/([^/]+)\/workspace(\/merge)?$/` | src/server/routes/tasks.ts:59 |
-| * | `/^\/api\/tasks\/([^/]+)$/` | src/server/routes/tasks.ts:32 |
+| * | `/^\/api\/tasks\/([^/]+)\/terminals$/` | src/server/routes/tasks.ts:80 |
+| * | `/^\/api\/tasks\/([^/]+)\/verifications$/` | src/server/routes/tasks.ts:34 |
+| * | `/^\/api\/tasks\/([^/]+)\/workspace(\/merge)?$/` | src/server/routes/tasks.ts:60 |
+| * | `/^\/api\/tasks\/([^/]+)$/` | src/server/routes/tasks.ts:33 |
 | * | `/^\/api\/terminals\/([^/]+)\/recover$/` | src/server/routes/terminals.ts:32 |
 | * | `/^\/api\/terminals\/([^/]+)\/running$/` | src/server/routes/terminals.ts:24 |
 | * | `/^\/api\/terminals\/([^/]+)$/` | src/server/routes/terminals.ts:40 |
 | POST | `/api/browser/act` | src/server/routes/environment.ts:65 |
 | POST | `/api/browser/goto` | src/server/routes/environment.ts:54 |
 | GET | `/api/browser/screenshot` | src/server/routes/environment.ts:78 |
-| GET | `/api/default-model` | src/server/routes/sessions.ts:137 |
+| GET | `/api/default-model` | src/server/routes/sessions.ts:138 |
 | GET | `/api/dev-servers` | src/server/routes/environment.ts:10 |
 | GET | `/api/dev-servers/logs` | src/server/routes/environment.ts:14 |
 | POST | `/api/dev-servers/start` | src/server/routes/environment.ts:24 |
@@ -39,13 +39,13 @@ Found 40 routes.
 | GET | `/api/project-records` | src/server/routes/projects.ts:27 |
 | POST | `/api/project-records` | src/server/routes/projects.ts:31 |
 | GET | `/api/projects` | src/server/routes/projects.ts:16 |
-| GET | `/api/providers` | src/server/routes/tasks.ts:16 |
+| GET | `/api/providers` | src/server/routes/tasks.ts:17 |
 | GET | `/api/roles` | src/server/routes/roles.ts:11 |
 | POST | `/api/roles` | src/server/routes/roles.ts:19 |
-| GET | `/api/sessions` | src/server/routes/sessions.ts:68 |
-| POST | `/api/sessions` | src/server/routes/sessions.ts:72 |
-| GET | `/api/tasks` | src/server/routes/tasks.ts:20 |
-| POST | `/api/tasks` | src/server/routes/tasks.ts:24 |
+| GET | `/api/sessions` | src/server/routes/sessions.ts:69 |
+| POST | `/api/sessions` | src/server/routes/sessions.ts:73 |
+| GET | `/api/tasks` | src/server/routes/tasks.ts:21 |
+| POST | `/api/tasks` | src/server/routes/tasks.ts:25 |
 | GET | `/api/terminals` | src/server/routes/terminals.ts:9 |
 | POST | `/api/terminals/reconcile` | src/server/routes/terminals.ts:13 |
 
@@ -53,25 +53,25 @@ Found 40 routes.
 flowchart TB
   Rsrc_server_routes_projects_ts_72_regex["* /^\/api\/project-revisions\/([^/]+)(\/approve|\/discard)?$/"]
   Rsrc_server_routes_roles_ts_27_regex["* /^\/api\/roles\/([^/]+)$/"]
-  Rsrc_server_routes_sessions_ts_53_regex["* /^\/api\/sessions\/([^/]+)\/acknowledge$/"]
-  Rsrc_server_routes_sessions_ts_101_regex["* /^\/api\/sessions\/([^/]+)\/events$/"]
-  Rsrc_server_routes_sessions_ts_118_regex["* /^\/api\/sessions\/([^/]+)\/followup$/"]
-  Rsrc_server_routes_sessions_ts_109_regex["* /^\/api\/sessions\/([^/]+)\/stop$/"]
-  Rsrc_server_routes_tasks_ts_122_regex["* /^\/api\/tasks\/([^/]+)\/runs\/([^/]+)\/(review|merge)$/"]
-  Rsrc_server_routes_tasks_ts_108_regex["* /^\/api\/tasks\/([^/]+)\/runs\/preview$/"]
-  Rsrc_server_routes_tasks_ts_107_regex["* /^\/api\/tasks\/([^/]+)\/runs$/"]
+  Rsrc_server_routes_sessions_ts_54_regex["* /^\/api\/sessions\/([^/]+)\/acknowledge$/"]
+  Rsrc_server_routes_sessions_ts_102_regex["* /^\/api\/sessions\/([^/]+)\/events$/"]
+  Rsrc_server_routes_sessions_ts_119_regex["* /^\/api\/sessions\/([^/]+)\/followup$/"]
+  Rsrc_server_routes_sessions_ts_110_regex["* /^\/api\/sessions\/([^/]+)\/stop$/"]
+  Rsrc_server_routes_tasks_ts_123_regex["* /^\/api\/tasks\/([^/]+)\/runs\/([^/]+)\/(review|merge)$/"]
+  Rsrc_server_routes_tasks_ts_109_regex["* /^\/api\/tasks\/([^/]+)\/runs\/preview$/"]
+  Rsrc_server_routes_tasks_ts_108_regex["* /^\/api\/tasks\/([^/]+)\/runs$/"]
   Rsrc_server_routes_roles_ts_38_regex["* /^\/api\/tasks\/([^/]+)\/teams(\/plan)?$/"]
-  Rsrc_server_routes_tasks_ts_79_regex["* /^\/api\/tasks\/([^/]+)\/terminals$/"]
-  Rsrc_server_routes_tasks_ts_33_regex["* /^\/api\/tasks\/([^/]+)\/verifications$/"]
-  Rsrc_server_routes_tasks_ts_59_regex["* /^\/api\/tasks\/([^/]+)\/workspace(\/merge)?$/"]
-  Rsrc_server_routes_tasks_ts_32_regex["* /^\/api\/tasks\/([^/]+)$/"]
+  Rsrc_server_routes_tasks_ts_80_regex["* /^\/api\/tasks\/([^/]+)\/terminals$/"]
+  Rsrc_server_routes_tasks_ts_34_regex["* /^\/api\/tasks\/([^/]+)\/verifications$/"]
+  Rsrc_server_routes_tasks_ts_60_regex["* /^\/api\/tasks\/([^/]+)\/workspace(\/merge)?$/"]
+  Rsrc_server_routes_tasks_ts_33_regex["* /^\/api\/tasks\/([^/]+)$/"]
   Rsrc_server_routes_terminals_ts_32_regex["* /^\/api\/terminals\/([^/]+)\/recover$/"]
   Rsrc_server_routes_terminals_ts_24_regex["* /^\/api\/terminals\/([^/]+)\/running$/"]
   Rsrc_server_routes_terminals_ts_40_regex["* /^\/api\/terminals\/([^/]+)$/"]
   Rsrc_server_routes_environment_ts_65_literal["POST /api/browser/act"]
   Rsrc_server_routes_environment_ts_54_literal["POST /api/browser/goto"]
   Rsrc_server_routes_environment_ts_78_literal["GET /api/browser/screenshot"]
-  Rsrc_server_routes_sessions_ts_137_literal["GET /api/default-model"]
+  Rsrc_server_routes_sessions_ts_138_literal["GET /api/default-model"]
   Rsrc_server_routes_environment_ts_10_literal["GET /api/dev-servers"]
   Rsrc_server_routes_environment_ts_14_literal["GET /api/dev-servers/logs"]
   Rsrc_server_routes_environment_ts_24_literal["POST /api/dev-servers/start"]
@@ -82,13 +82,13 @@ flowchart TB
   Rsrc_server_routes_projects_ts_27_literal["GET /api/project-records"]
   Rsrc_server_routes_projects_ts_31_literal["POST /api/project-records"]
   Rsrc_server_routes_projects_ts_16_literal["GET /api/projects"]
-  Rsrc_server_routes_tasks_ts_16_literal["GET /api/providers"]
+  Rsrc_server_routes_tasks_ts_17_literal["GET /api/providers"]
   Rsrc_server_routes_roles_ts_11_literal["GET /api/roles"]
   Rsrc_server_routes_roles_ts_19_literal["POST /api/roles"]
-  Rsrc_server_routes_sessions_ts_68_literal["GET /api/sessions"]
-  Rsrc_server_routes_sessions_ts_72_literal["POST /api/sessions"]
-  Rsrc_server_routes_tasks_ts_20_literal["GET /api/tasks"]
-  Rsrc_server_routes_tasks_ts_24_literal["POST /api/tasks"]
+  Rsrc_server_routes_sessions_ts_69_literal["GET /api/sessions"]
+  Rsrc_server_routes_sessions_ts_73_literal["POST /api/sessions"]
+  Rsrc_server_routes_tasks_ts_21_literal["GET /api/tasks"]
+  Rsrc_server_routes_tasks_ts_25_literal["POST /api/tasks"]
   Rsrc_server_routes_terminals_ts_9_literal["GET /api/terminals"]
   Rsrc_server_routes_terminals_ts_13_literal["POST /api/terminals/reconcile"]
 ```

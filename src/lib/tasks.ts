@@ -1,4 +1,4 @@
-export type RunStatus = "running" | "done" | "stopped" | "error" | "interrupted";
+export type RunStatus = "queued" | "running" | "done" | "stopped" | "error" | "interrupted";
 export type ProviderId = "opencode" | "codex" | "claude";
 export const providerLabels: Record<ProviderId, string> = { opencode: "OpenCode", codex: "Codex", claude: "Claude Code" };
 export interface ContextBudget {
@@ -107,11 +107,15 @@ export interface RunRecord {
   onyxContextSha?: string;
   onyxProvenance?: "onyx" | "unavailable";
   onyxNotice?: string;
+  /** Persisted launch plan for a queued run so promotion reproduces the accepted request. */
+  launch?: { readOnly?: boolean; followup?: boolean };
   status: RunStatus;
   eventCount: number;
   startedAt: number;
   endedAt?: number;
   exitCode: number | null;
+  /** Transient: 1-based FIFO position among queued runs, set by the runs API. */
+  queuePosition?: number;
 }
 
 export interface RunContextCapture {
@@ -227,6 +231,7 @@ export interface TeamPlan {
 }
 
 export const runStatusLabel: Record<RunStatus, string> = {
+  queued: "Queued",
   running: "Running",
   done: "Ready for review",
   stopped: "Stopped",

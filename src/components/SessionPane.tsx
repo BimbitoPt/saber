@@ -108,7 +108,9 @@ export function SessionPane({ sessionId }: { sessionId: string | null }) {
         }
         setStatus(snap.status);
         setError("");
+        // Queued runs stay silent until promotion, so poll them slowly instead of freezing the pane.
         if (snap.hasMore || snap.status === "running") timer = setTimeout(poll, 60);
+        else if (snap.status === "queued") timer = setTimeout(poll, 1000);
       } catch (e) {
         if (!cancelled) { setError(`Output connection failed: ${String(e)}`); timer = setTimeout(poll, 1000); }
       }
