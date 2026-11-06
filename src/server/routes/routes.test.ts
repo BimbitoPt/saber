@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TaskStore } from "../taskStore";
@@ -309,5 +310,70 @@ describe("environment routes", () => {
     expect((await post("/api/dev-servers/start", {}))?.status).toBe(400);
     expect((await post("/api/browser/goto", {}))?.status).toBe(400);
     expect((await post("/api/browser/act", {}))?.status).toBe(400);
+  });
+});
+
+describe("launch routes", () => {
+  const savedLaunchCwd = process.env.SABER_LAUNCH_CWD;
+  let repository: string;
+
+  function restoreEnv() {
+    if (savedLaunchCwd === undefined) delete process.env.SABER_LAUNCH_CWD;
+    else process.env.SABER_LAUNCH_CWD = savedLaunchCwd;
+  }
+
+  afterAll(restoreEnv);
+
+  it("REPO-FIRST-02/03 registers a launched repository once with its detected context", async () => {
+    repository = mkdtempSync(join(tmpdir(), "saber-launch-route-"));
+    const nested = join(repository, "packages", "app");
+    mkdirSync(nested, { recursive: true });
+    execFileSync("git", ["-C", repository, "init", "-q"]);
+    execFileSync("git", ["-C", repository, "config", "user.email", "saber@example.com"]);
+    execFileSync("git", ["-C", repository, "config", "user.name", "Saber"]);
+    writeFileSync(join(repository, "AGENTS.md"), "Stack: Bun.\n");
+    execFileSync("git", ["-C", repository, "add", "."]);
+    execFileSync("git", ["-C", repository, "commit", "-q", "-m", "init"]);
+
+    const launched = await post("/api/launch", { cwd: nested });
+    expect(launched?.status).toBe(201);
+    const context = await json(launched);
+    expect(context.status).toBe("repository");
+    expect(context.project.root).toBe(repository);
+    expect(context.project.displayName).toBe(repository.split("/").pop());
+    expect(context.repository.dirty).toBe(false);
+    expect(context.guidance.agentsFile).toBe(join(repository, "AGENTS.md"));
+
+    const records = await json(await api("/api/project-records"));
+    expect(records.filter((record: { root: string }) => record.root === repository)).toHaveLength(1);
+    rmSync(repository, { recursive: true, force: true });
+  });
+
+  it("REPO-FIRST-07 explains a launch outside git and offers the last project", async () => {
+    const outside = mkdtempSync(join(tmpdir(), "saber-launch-outside-"));
+    const response = await post("/api/launch", { cwd: outside });
+    expect(response?.status).toBe(201);
+    const context = await json(response);
+    expect(context.status).toBe("outside-git");
+    expect(context.fallback.reason).toContain("not inside a Git repository");
+    rmSync(outside, { recursive: true, force: true });
+
+    expect((await post("/api/launch", { cwd: join(tmpdir(), "saber-launch-missing") }))?.status).toBe(400);
+    expect((await post("/api/launch", {}))?.status).toBe(400);
+  });
+
+  it("REPO-FIRST-01 resolves the launcher cwd handoff from the environment", async () => {
+    repository = mkdtempSync(join(tmpdir(), "saber-launch-env-"));
+    execFileSync("git", ["-C", repository, "init", "-q"]);
+    process.env.SABER_LAUNCH_CWD = repository;
+    const context = await json(await api("/api/launch-context"));
+    expect(context.status).toBe("repository");
+    expect(context.project.root).toBe(repository);
+    rmSync(repository, { recursive: true, force: true });
+
+    delete process.env.SABER_LAUNCH_CWD;
+    const unavailable = await json(await api("/api/launch-context"));
+    expect(unavailable.status).toBe("unavailable");
+    expect(unavailable.fallback.reason).toContain("without a working directory");
   });
 });

@@ -233,3 +233,25 @@ export const runStatusLabel: Record<RunStatus, string> = {
   error: "Failed",
   interrupted: "Interrupted",
 };
+
+export interface RepositoryState {
+  branch?: string;
+  detached: boolean;
+  dirty: boolean;
+}
+
+export interface RepositoryGuidance {
+  agentsFile?: string;
+  readme?: string;
+  packageManager?: string;
+  scripts: string[];
+}
+
+export interface LaunchContext {
+  status: "repository" | "outside-git" | "unavailable";
+  launchDirectory: string;
+  project?: ProjectRecord;
+  repository?: RepositoryState;
+  guidance?: RepositoryGuidance;
+  fallback?: { reason: string; lastProject?: ProjectRecord | null };
+}

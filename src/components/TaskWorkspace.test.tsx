@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   listProjects: vi.fn(),
   listTasks: vi.fn(),
   reconcileSessions: vi.fn(),
+  getLaunchContext: vi.fn(),
 }));
 
 vi.mock("../lib/api", async (importOriginal) => {
@@ -20,6 +21,7 @@ vi.mock("../lib/api", async (importOriginal) => {
     listProjects: () => mocks.listProjects(),
     listTasks: () => mocks.listTasks(),
     reconcileTerminalSessions: (...args: unknown[]) => mocks.reconcileSessions(...args),
+    getLaunchContext: () => mocks.getLaunchContext(),
     listProviders: vi.fn(async () => []),
     listTaskRuns: vi.fn(async () => []),
     listVerifications: vi.fn(async () => ({ records: [], summary: { passed: 0, failed: 0, stale: 0, total: 0, state: "unverified" } })),
@@ -95,6 +97,7 @@ describe("TaskWorkspace terminal view lifecycle", () => {
     mocks.listProjects.mockResolvedValue(tasks.map((task) => ({ path: task.project, name: task.title })));
     mocks.listTasks.mockResolvedValue(tasks);
     mocks.reconcileSessions.mockResolvedValue([]);
+    mocks.getLaunchContext.mockResolvedValue({ status: "unavailable", launchDirectory: "", fallback: { reason: "Saber was launched from the OS shell without a working directory." } });
     localStorage.setItem("saber.selectedTask", "task-a");
     Object.defineProperty(window, "__TAURI_INTERNALS__", { value: {}, configurable: true });
     host = document.createElement("div");
@@ -176,6 +179,7 @@ describe("TaskWorkspace terminal startup errors", () => {
     mocks.listProjects.mockResolvedValue(tasks.map((task) => ({ path: task.project, name: task.title })));
     mocks.listTasks.mockResolvedValue(tasks);
     mocks.reconcileSessions.mockResolvedValue([]);
+    mocks.getLaunchContext.mockResolvedValue({ status: "unavailable", launchDirectory: "", fallback: { reason: "Saber was launched from the OS shell without a working directory." } });
     host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);
@@ -196,5 +200,103 @@ describe("TaskWorkspace terminal startup errors", () => {
     expect(content).toContain("Saber could not reconcile terminal sessions: Error: native terminal unavailable");
     expect(content).not.toContain("Checking terminal sessions…");
     expect(content).toContain("No terminal is running for this task.");
+  });
+});
+
+describe("TaskWorkspace repository-first launch", () => {
+  beforeEach(async () => {
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    mocks.mounts = {};
+    mocks.unmounts = {};
+    mocks.starts = {};
+    localStorage.clear();
+    Object.defineProperty(window, "__TAURI_INTERNALS__", { value: {}, configurable: true });
+    mocks.invoke.mockResolvedValue([]);
+    mocks.listProjects.mockResolvedValue([{ path: "/home/bimbito/inventory-first", name: "Inventory first" }]);
+    mocks.listTasks.mockResolvedValue([]);
+    mocks.reconcileSessions.mockResolvedValue([]);
+    mocks.getLaunchContext.mockResolvedValue({ status: "unavailable", launchDirectory: "" });
+  });
+
+  afterEach(async () => {
+    await act(async () => { root.unmount(); });
+    host.remove();
+    localStorage.clear();
+    delete (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+    delete (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT;
+  });
+
+  async function renderWorkspace() {
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    await act(async () => { root.render(createElement(TaskWorkspace)); });
+    await flushEffects();
+  }
+
+  async function openTaskForm() {
+    await clickButton("List");
+  }
+
+  function projectInputValue() {
+    return (document.querySelector('input[list="task-projects"]') as HTMLInputElement | null)?.value;
+  }
+
+  it("prefills the new task form with the detected repository and shows the launch summary", async () => {
+    mocks.getLaunchContext.mockResolvedValue({
+      status: "repository",
+      launchDirectory: "/repo/packages/app",
+      project: { root: "/repo", displayName: "repo", createdAt: 1 },
+      repository: { branch: "main", detached: false, dirty: false },
+      guidance: { agentsFile: "/repo/AGENTS.md", packageManager: "bun", scripts: [] },
+    });
+    await renderWorkspace();
+    await openTaskForm();
+    expect(projectInputValue()).toBe("/repo");
+    const summary = document.body.textContent ?? "";
+    expect(summary).toContain("repo");
+    expect(summary).toContain("main");
+    expect(summary).toContain("clean tree");
+    expect(summary).toContain("AGENTS.md detected");
+    expect(summary).toContain("bun");
+  });
+
+  it("overrides the inventory prefill with the launched repository", async () => {
+    mocks.getLaunchContext.mockResolvedValue({
+      status: "repository",
+      launchDirectory: "/repo",
+      project: { root: "/repo", displayName: "repo", createdAt: 1 },
+      repository: { branch: "main", detached: false, dirty: true },
+    });
+    await renderWorkspace();
+    await openTaskForm();
+    expect(projectInputValue()).toBe("/repo");
+  });
+
+  it("keeps a saved draft project over the launched repository", async () => {
+    localStorage.setItem("saber.newTask", JSON.stringify({ project: "/home/bimbito/draft-project", title: "Draft", spec: "s", criteria: "c" }));
+    mocks.getLaunchContext.mockResolvedValue({
+      status: "repository",
+      launchDirectory: "/repo",
+      project: { root: "/repo", displayName: "repo", createdAt: 1 },
+      repository: { branch: "main", detached: false, dirty: false },
+    });
+    await renderWorkspace();
+    await openTaskForm();
+    expect(projectInputValue()).toBe("/home/bimbito/draft-project");
+  });
+
+  it("explains an outside-git launch instead of guessing a project", async () => {
+    mocks.getLaunchContext.mockResolvedValue({
+      status: "outside-git",
+      launchDirectory: "/tmp/notes",
+      fallback: { reason: "The launch directory is not inside a Git repository.", lastProject: { root: "/previous", displayName: "Previous", createdAt: 1 } },
+    });
+    await renderWorkspace();
+    await openTaskForm();
+    const summary = document.body.textContent ?? "";
+    expect(summary).toContain("The launch directory is not inside a Git repository.");
+    expect(summary).toContain("Previous");
+    expect(projectInputValue()).toBe("/home/bimbito/inventory-first");
   });
 });

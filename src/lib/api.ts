@@ -1,4 +1,4 @@
-import type { TaskInput, TaskPatch, TaskRecord, TaskSummary, RunRecord, ProviderId, ProviderStatus, TerminalSessionRecord, WorkspaceReview, VerificationRecord, VerificationSummary, VerificationOutcome, ProjectRecord, ProfileEntry, ProfileRevision, ScopePreview, SpecialistRole, TeamPlan, TeamRecord, TeamMemberSelection } from "./tasks";
+import type { TaskInput, TaskPatch, TaskRecord, TaskSummary, RunRecord, ProviderId, ProviderStatus, TerminalSessionRecord, WorkspaceReview, VerificationRecord, VerificationSummary, VerificationOutcome, ProjectRecord, ProfileEntry, ProfileRevision, ScopePreview, SpecialistRole, TeamPlan, TeamRecord, TeamMemberSelection, LaunchContext } from "./tasks";
 
 export interface Project {
   name: string;
@@ -39,6 +39,10 @@ async function jsonFetch<T>(url: string, init?: RequestInit): Promise<T> {
 
 export function listProjects() {
   return jsonFetch<Project[]>("/api/projects");
+}
+
+export function getLaunchContext() {
+  return jsonFetch<LaunchContext>("/api/launch-context");
 }
 
 export function defaultModel() {
