@@ -11,9 +11,9 @@ Found 39 routes.
 | * | `/^\/api\/project-revisions\/([^/]+)(\/approve|\/discard)?$/` | src/server/routes/projects.ts:72 |
 | * | `/^\/api\/roles\/([^/]+)$/` | src/server/routes/roles.ts:27 |
 | * | `/^\/api\/sessions\/([^/]+)\/acknowledge$/` | src/server/routes/sessions.ts:36 |
-| * | `/^\/api\/sessions\/([^/]+)\/events$/` | src/server/routes/sessions.ts:73 |
-| * | `/^\/api\/sessions\/([^/]+)\/followup$/` | src/server/routes/sessions.ts:90 |
-| * | `/^\/api\/sessions\/([^/]+)\/stop$/` | src/server/routes/sessions.ts:81 |
+| * | `/^\/api\/sessions\/([^/]+)\/events$/` | src/server/routes/sessions.ts:84 |
+| * | `/^\/api\/sessions\/([^/]+)\/followup$/` | src/server/routes/sessions.ts:101 |
+| * | `/^\/api\/sessions\/([^/]+)\/stop$/` | src/server/routes/sessions.ts:92 |
 | * | `/^\/api\/tasks\/([^/]+)\/runs\/([^/]+)\/(review|merge)$/` | src/server/routes/tasks.ts:120 |
 | * | `/^\/api\/tasks\/([^/]+)\/runs\/preview$/` | src/server/routes/tasks.ts:106 |
 | * | `/^\/api\/tasks\/([^/]+)\/runs$/` | src/server/routes/tasks.ts:105 |
@@ -28,7 +28,7 @@ Found 39 routes.
 | POST | `/api/browser/act` | src/server/routes/environment.ts:55 |
 | POST | `/api/browser/goto` | src/server/routes/environment.ts:44 |
 | GET | `/api/browser/screenshot` | src/server/routes/environment.ts:68 |
-| GET | `/api/default-model` | src/server/routes/sessions.ts:109 |
+| GET | `/api/default-model` | src/server/routes/sessions.ts:120 |
 | GET | `/api/dev-servers` | src/server/routes/environment.ts:10 |
 | POST | `/api/dev-servers/start` | src/server/routes/environment.ts:14 |
 | POST | `/api/dev-servers/stop` | src/server/routes/environment.ts:27 |
@@ -41,8 +41,8 @@ Found 39 routes.
 | GET | `/api/providers` | src/server/routes/tasks.ts:15 |
 | GET | `/api/roles` | src/server/routes/roles.ts:11 |
 | POST | `/api/roles` | src/server/routes/roles.ts:19 |
-| GET | `/api/sessions` | src/server/routes/sessions.ts:46 |
-| POST | `/api/sessions` | src/server/routes/sessions.ts:50 |
+| GET | `/api/sessions` | src/server/routes/sessions.ts:51 |
+| POST | `/api/sessions` | src/server/routes/sessions.ts:55 |
 | GET | `/api/tasks` | src/server/routes/tasks.ts:19 |
 | POST | `/api/tasks` | src/server/routes/tasks.ts:23 |
 | GET | `/api/terminals` | src/server/routes/terminals.ts:9 |
@@ -53,9 +53,9 @@ flowchart TB
   Rsrc_server_routes_projects_ts_72_regex["* /^\/api\/project-revisions\/([^/]+)(\/approve|\/discard)?$/"]
   Rsrc_server_routes_roles_ts_27_regex["* /^\/api\/roles\/([^/]+)$/"]
   Rsrc_server_routes_sessions_ts_36_regex["* /^\/api\/sessions\/([^/]+)\/acknowledge$/"]
-  Rsrc_server_routes_sessions_ts_73_regex["* /^\/api\/sessions\/([^/]+)\/events$/"]
-  Rsrc_server_routes_sessions_ts_90_regex["* /^\/api\/sessions\/([^/]+)\/followup$/"]
-  Rsrc_server_routes_sessions_ts_81_regex["* /^\/api\/sessions\/([^/]+)\/stop$/"]
+  Rsrc_server_routes_sessions_ts_84_regex["* /^\/api\/sessions\/([^/]+)\/events$/"]
+  Rsrc_server_routes_sessions_ts_101_regex["* /^\/api\/sessions\/([^/]+)\/followup$/"]
+  Rsrc_server_routes_sessions_ts_92_regex["* /^\/api\/sessions\/([^/]+)\/stop$/"]
   Rsrc_server_routes_tasks_ts_120_regex["* /^\/api\/tasks\/([^/]+)\/runs\/([^/]+)\/(review|merge)$/"]
   Rsrc_server_routes_tasks_ts_106_regex["* /^\/api\/tasks\/([^/]+)\/runs\/preview$/"]
   Rsrc_server_routes_tasks_ts_105_regex["* /^\/api\/tasks\/([^/]+)\/runs$/"]
@@ -70,7 +70,7 @@ flowchart TB
   Rsrc_server_routes_environment_ts_55_literal["POST /api/browser/act"]
   Rsrc_server_routes_environment_ts_44_literal["POST /api/browser/goto"]
   Rsrc_server_routes_environment_ts_68_literal["GET /api/browser/screenshot"]
-  Rsrc_server_routes_sessions_ts_109_literal["GET /api/default-model"]
+  Rsrc_server_routes_sessions_ts_120_literal["GET /api/default-model"]
   Rsrc_server_routes_environment_ts_10_literal["GET /api/dev-servers"]
   Rsrc_server_routes_environment_ts_14_literal["POST /api/dev-servers/start"]
   Rsrc_server_routes_environment_ts_27_literal["POST /api/dev-servers/stop"]
@@ -83,8 +83,8 @@ flowchart TB
   Rsrc_server_routes_tasks_ts_15_literal["GET /api/providers"]
   Rsrc_server_routes_roles_ts_11_literal["GET /api/roles"]
   Rsrc_server_routes_roles_ts_19_literal["POST /api/roles"]
-  Rsrc_server_routes_sessions_ts_46_literal["GET /api/sessions"]
-  Rsrc_server_routes_sessions_ts_50_literal["POST /api/sessions"]
+  Rsrc_server_routes_sessions_ts_51_literal["GET /api/sessions"]
+  Rsrc_server_routes_sessions_ts_55_literal["POST /api/sessions"]
   Rsrc_server_routes_tasks_ts_19_literal["GET /api/tasks"]
   Rsrc_server_routes_tasks_ts_23_literal["POST /api/tasks"]
   Rsrc_server_routes_terminals_ts_9_literal["GET /api/terminals"]

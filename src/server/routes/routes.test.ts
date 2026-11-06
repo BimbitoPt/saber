@@ -207,7 +207,7 @@ describe("project routes", () => {
     expect((await api("/api/project-revisions/missing"))?.status).toBe(405);
     const discarded = await post("/api/project-revisions/missing/discard", {});
     expect(discarded?.status).toBe(404);
-    expect((await json(discarded)).error).toBe("Resource not found.");
+    expect((await json(discarded)).error).toBe("Revision not found");
   });
 });
 
