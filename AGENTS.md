@@ -16,3 +16,6 @@ Current slice: M7 Linux desktop runtime in docs/superpowers/specs/2026-09-24-lin
 Preserve task/run separation and immutable run scope. Use task worktrees for parallel changes. Existing shared-checkout tasks remain serialized.
 Verification gates are read-only to workers: the check command comes from the feature spec, and a diff touching tests, verification plans, or acceptance criteria needs human review before a green run counts as evidence.
 Fault symptoms before swapping models: docs/harness/diagnostics.md. A model swap that improves the outcome less than about 20% was not the problem.
+
+## Visual web work
+For website, landing-page, frontend polish, motion, or Three.js tasks, load `.agents/skills/visual-web/SKILL.md` and follow `docs/harness/visual-web-agent.md`. Use the task template before implementation. Browser screenshots and the visual rubric are required evidence; build success alone is not visual verification. Saber itself remains on Vite + TanStack Start unless a migration is explicitly requested.
