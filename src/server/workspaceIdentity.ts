@@ -1,8 +1,9 @@
-import { existsSync, realpathSync } from "node:fs";
-import { dirname, join, resolve, sep } from "node:path";
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { canonicalPath } from "./canonicalPath";
 
 function workspaceRoot(path: string) {
-  const canonical = existsSync(path) ? realpathSync(path) : resolve(path);
+  const canonical = canonicalPath(path);
   let current = canonical;
   while (true) {
     if (existsSync(join(current, ".git"))) return current;
@@ -13,16 +14,12 @@ function workspaceRoot(path: string) {
 }
 
 export function canonicalizeProjectRoot(path: string) {
-  const canonical = existsSync(path) ? realpathSync(path) : resolve(path);
-  return process.platform === "win32" ? canonical.toLowerCase() : canonical;
+  return canonicalPath(path);
 }
 
 export function workspacesOverlap(first: string, second: string) {
-  const key = (path: string) => {
-    const root = workspaceRoot(path);
-    return process.platform === "win32" ? root.toLowerCase() : root;
-  };
+  const key = (path: string) => workspaceRoot(path).replace(/\\/g, "/").replace(/\/+$/, "");
   const a = key(first);
   const b = key(second);
-  return a === b || a.startsWith(b.endsWith(sep) ? b : b + sep) || b.startsWith(a.endsWith(sep) ? a : a + sep);
+  return a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
 }

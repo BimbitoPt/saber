@@ -202,7 +202,7 @@ describe("specialist team launch", { timeout: 30000 }, () => {
     expect(runs).toHaveLength(2);
     const [first, second] = team.members.map((member) => store.getRun(member.runId)!);
     expect(first.project).not.toBe(second.project);
-    expect(first.project).toContain(join("managed", task.id, "runs"));
+    expect(first.project.replace(/\\/g, "/")).toContain(`managed/${task.id}/runs`);
     expect(existsSync(first.project)).toBe(true);
     expect(existsSync(second.project)).toBe(true);
     expect(first).toMatchObject({ roleId: "implementer", provider: "opencode", status: "running" });
