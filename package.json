@@ -15,7 +15,8 @@
     "test": "vitest run",
     "bench:responsiveness": "node scripts/bench-responsiveness.ts",
     "test:terminal": "bun scripts/verify-terminal.ts",
-    "verify:harness": "bun scripts/verify-harness.ts"
+    "verify:harness": "bun scripts/verify-harness.ts",
+    "verify:visual-harness": "bun scripts/verify-visual-harness.ts"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.2.1",
