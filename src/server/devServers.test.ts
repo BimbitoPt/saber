@@ -322,6 +322,21 @@ describe("dev server logs", () => {
     expect(h.manager.devServerLog("alpha", 0)).toBeUndefined();
   });
 
+  it("keeps stdout and stderr partial lines isolated when chunks interleave", async () => {
+    const h = harness({ waitUpMs: 1_000 });
+    await h.manager.start("alpha");
+    await h.manager.settle("alpha");
+
+    h.children[0].stdout.write("building");
+    h.children[0].stderr.write("warning: deprecated\\n");
+    h.children[0].stdout.write(" app\\n");
+
+    expect(h.manager.devServerLog("alpha", 0)).toEqual({
+      lines: ["warning: deprecated", "building app"],
+      total: 2,
+    });
+  });
+
   it("matches only real path descendants when injecting the dev server URL", async () => {
     const h = harness({ waitUpMs: 1_000 });
     await h.manager.start("beta");
