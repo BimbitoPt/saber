@@ -21,13 +21,10 @@ function resolveExe(): string {
 export const OPENCODE_EXE = resolveExe();
 
 export function buildArgs(opts: SpawnOptions): string[] {
-  if (opts.session) {
-    const args = ["run", "-s", opts.session, opts.task, "--format", "json", "--dir", opts.workdir];
-    if (opts.model) args.push("--model", opts.model);
-    return args;
-  }
-  const args = ["run", opts.task, "--format", "json", "--dir", opts.workdir];
+  const args = ["run", "--format", "json", "--dir", opts.workdir];
+  if (opts.session) args.push("-s", opts.session);
   if (opts.model) args.push("--model", opts.model);
+  args.push("--", opts.task);
   return args;
 }
 
