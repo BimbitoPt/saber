@@ -59,7 +59,7 @@ interface Entry extends DevServerEntry {
   proc: ManagedChild | null;
   logs: string[];
   logTotal: number;
-  logPartial: string;
+  logPartial: { stdout: string; stderr: string };
 }
 
 function wireStatus(state: DevServerState): DevServerStatus {
@@ -212,7 +212,7 @@ export class DevServerManager {
     } catch (error) {
       // Keep a failed projection so the pane reports `down` instead of hiding the attempt.
       this.reserved.delete(port);
-      this.entries.set(name, { project, port, state: "failed", startedAt: this.deps.now(), proc: null, logs: [], logTotal: 0, logPartial: "" });
+      this.entries.set(name, { project, port, state: "failed", startedAt: this.deps.now(), proc: null, logs: [], logTotal: 0, logPartial: { stdout: "", stderr: "" } });
       throw error;
     }
 
@@ -313,13 +313,17 @@ export class DevServerManager {
   }
 
   private attachLogs(entry: Entry, proc: ManagedChild): void {
-    for (const stream of [proc.stdout, proc.stderr]) {
+    const streams = [
+      ["stdout", proc.stdout],
+      ["stderr", proc.stderr],
+    ] as const;
+    for (const [name, stream] of streams) {
       if (!stream) continue;
       stream.setEncoding("utf8");
       stream.on("data", (chunk: string) => {
-        entry.logPartial += chunk;
-        const lines = entry.logPartial.split(/\r?\n/);
-        entry.logPartial = lines.pop() ?? "";
+        const partial = entry.logPartial[name] + chunk;
+        const lines = partial.split(/\r?\n/);
+        entry.logPartial[name] = lines.pop() ?? "";
         for (const line of lines) this.pushLog(entry, line);
       });
     }
@@ -372,8 +376,10 @@ export class DevServerManager {
     // marked `failed` by a timed-out stop must still forget its handle when it exits.
     if (entry.state !== "exited" && entry.state !== "failed") entry.state = state;
     entry.proc = null;
-    if (entry.logPartial.trim()) this.pushLog(entry, entry.logPartial);
-    entry.logPartial = "";
+    for (const name of ["stdout", "stderr"] as const) {
+      if (entry.logPartial[name].trim()) this.pushLog(entry, entry.logPartial[name]);
+      entry.logPartial[name] = "";
+    }
   }
 
   private async monitorUp(name: string, entry: Entry): Promise<void> {
