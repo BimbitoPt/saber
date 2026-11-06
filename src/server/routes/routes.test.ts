@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TaskStore } from "../taskStore";
@@ -183,6 +183,21 @@ describe("session routes", () => {
     const followup = await post("/api/sessions/missing/followup", {});
     expect(followup?.status).toBe(400);
     expect((await json(followup)).error).toBe("task is required");
+  });
+
+  it("MOD-05 reads the opencode model from SABER_OPENCODE_CONFIG on any platform", async () => {
+    const config = join(directory, "opencode.jsonc");
+    writeFileSync(config, JSON.stringify({ model: "opencode/grok-code" }));
+    const previous = process.env.SABER_OPENCODE_CONFIG;
+    process.env.SABER_OPENCODE_CONFIG = config;
+    try {
+      const model = await api("/api/default-model");
+      expect(model?.status).toBe(200);
+      expect(await json(model)).toEqual({ default: "opencode/grok-code" });
+    } finally {
+      if (previous === undefined) delete process.env.SABER_OPENCODE_CONFIG;
+      else process.env.SABER_OPENCODE_CONFIG = previous;
+    }
   });
 });
 
