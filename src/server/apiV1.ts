@@ -3,6 +3,7 @@ import { basename } from "node:path";
 import type { ProviderId, RunRecord, TaskRecord, VerificationRecord } from "../lib/tasks";
 import { getTaskStore, type TaskStore } from "./taskStore";
 import { getOrCreateApiToken, hasValidBearerToken } from "./apiToken";
+import { validateLoopbackTransport } from "./transport";
 import { providerStatus } from "./providers/executables";
 import { GitWorkspaceService } from "./gitWorkspaces";
 import { getAgentRuns } from "./agentRuns";
@@ -15,7 +16,6 @@ const MAX_BODY_BYTES = 8192;
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 100;
-const loopbackHosts = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
 
 export interface ApiV1Dependencies {
   token?: string;
@@ -41,25 +41,6 @@ function failure(code: string, message: string, status: number, requestId = rand
 function logSafeError(requestId: string, dependencies: ApiV1Dependencies) {
   if (dependencies.logError) dependencies.logError(requestId, "API request failed");
   else console.error(`[Saber API ${requestId}] request failed`);
-}
-
-function isLoopback(hostname: string) { return loopbackHosts.has(hostname.toLowerCase()); }
-
-function validateTransport(request: Request): boolean {
-  const url = new URL(request.url);
-  const hostHeader = request.headers.get("host");
-  if (!isLoopback(url.hostname) || !hostHeader) return false;
-  let hostUrl: URL;
-  try { hostUrl = new URL(`${url.protocol}//${hostHeader}`); } catch { return false; }
-  if (!isLoopback(hostUrl.hostname) || hostUrl.host.toLowerCase() !== url.host.toLowerCase()) return false;
-  const origin = request.headers.get("origin");
-  if (origin) {
-    try {
-      const originUrl = new URL(origin);
-      if (!isLoopback(originUrl.hostname) || originUrl.origin !== url.origin) return false;
-    } catch { return false; }
-  }
-  return true;
 }
 
 function integerParameter(url: URL, key: string, fallback: number, min: number, max: number): number | undefined {
@@ -132,7 +113,7 @@ export async function handleApiV1(request: Request, dependencies: ApiV1Dependenc
   if (url.pathname !== "/api/v1" && !url.pathname.startsWith("/api/v1/")) return null;
   const requestId = randomUUID();
   const path = url.pathname;
-  if (!validateTransport(request)) return failure("operation_not_allowed", "Local API requests must use the loopback origin.", 403, requestId);
+  if (!validateLoopbackTransport(request)) return failure("operation_not_allowed", "Local API requests must use the loopback origin.", 403, requestId);
   if (url.search.length > MAX_QUERY_LENGTH || Number(request.headers.get("content-length") ?? 0) > MAX_BODY_BYTES) {
     return failure("validation_error", "Request exceeds the allowed size.", 413, requestId);
   }
