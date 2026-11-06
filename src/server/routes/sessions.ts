@@ -1,4 +1,4 @@
-import { jsonResponse, errorResponse } from "../http";
+import { jsonResponse, errorResponse, routeError } from "../http";
 import { describeError } from "../../lib/error-capture";
 import { getTaskStore } from "../taskStore";
 import { getAgentRuns } from "../agentRuns";
@@ -54,7 +54,12 @@ export const handle: RouteHandler = async (ctx) => {
   if (acknowledge && request.method === "POST") {
     const run = getTaskStore().getRun(acknowledge[1]);
     if (!run || run.status !== "interrupted") return jsonResponse({ error: "Run is not interrupted" }, 409);
-    const body = await request.json() as { processStopped?: boolean };
+    let body: { processStopped?: boolean };
+    try {
+      body = await request.json();
+    } catch {
+      return jsonResponse({ error: "Invalid JSON" }, 400);
+    }
     if (body?.processStopped !== true) return jsonResponse({ error: "Confirm the old process has stopped" }, 400);
     getTaskStore().finishRun(run.id, "stopped", null);
     return jsonResponse({ ok: true });
@@ -77,8 +82,14 @@ export const handle: RouteHandler = async (ctx) => {
     if (!project || !task) {
       return jsonResponse({ error: "project and task are required" }, 400);
     }
+    let workdir: string;
     try {
-      const record = getTaskStore().createTask({ project: resolveWorkdir(project), title: task.slice(0, 120), spec: task, criteria: "Report the changes and verification results." });
+      workdir = resolveWorkdir(project);
+    } catch (error) {
+      return errorResponse(error, 400);
+    }
+    try {
+      const record = getTaskStore().createTask({ project: workdir, title: task.slice(0, 120), spec: task, criteria: "Report the changes and verification results." });
       const id = await getAgentRuns().start(record.id, { model }, request.signal);
       return jsonResponse({ id }, 201);
     } catch (error) {
@@ -119,7 +130,7 @@ export const handle: RouteHandler = async (ctx) => {
       const id = await getAgentRuns().start(run.taskId, { provider: run.provider, followup: body.task }, request.signal);
       return jsonResponse({ id }, 201);
     } catch (error) {
-      return errorResponse(error, 500);
+      return routeError(error);
     }
   }
 
