@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   mounts: {} as Record<string, number>,
   unmounts: {} as Record<string, number>,
   starts: {} as Record<string, number>,
+  invoke: vi.fn(),
   listProjects: vi.fn(),
   listTasks: vi.fn(),
   reconcileSessions: vi.fn(),
@@ -20,7 +21,7 @@ vi.mock("../lib/api", () => ({
 }));
 
 vi.mock("@tauri-apps/api/core", () => ({
-  invoke: vi.fn(async (command: string) => command === "terminal_list" ? [] : undefined),
+  invoke: (...args: unknown[]) => mocks.invoke(...args),
 }));
 
 vi.mock("./TerminalSurface", async () => {
@@ -75,6 +76,7 @@ describe("TaskWorkspace terminal view lifecycle", () => {
     mocks.mounts = {};
     mocks.unmounts = {};
     mocks.starts = {};
+    mocks.invoke.mockResolvedValue([]);
     mocks.listProjects.mockResolvedValue(tasks.map((task) => ({ path: task.project, name: task.title })));
     mocks.listTasks.mockResolvedValue(tasks);
     mocks.reconcileSessions.mockResolvedValue([]);
@@ -131,5 +133,40 @@ describe("TaskWorkspace terminal view lifecycle", () => {
     expect(mocks.unmounts["task-a"] ?? 0).toBe(0);
     expect(mocks.starts["task-a"]).toBe(1);
     expect(mocks.starts["task-b"]).toBe(1);
+  });
+});
+
+
+describe("TaskWorkspace terminal startup errors", () => {
+  beforeEach(async () => {
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    vi.clearAllMocks();
+    localStorage.clear();
+    localStorage.setItem("saber.selectedTask", "task-a");
+    Object.defineProperty(window, "__TAURI_INTERNALS__", { value: {}, configurable: true });
+    mocks.invoke.mockRejectedValue(new Error("native terminal unavailable"));
+    mocks.listProjects.mockResolvedValue(tasks.map((task) => ({ path: task.project, name: task.title })));
+    mocks.listTasks.mockResolvedValue(tasks);
+    mocks.reconcileSessions.mockResolvedValue([]);
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    await act(async () => { root.render(createElement(TaskWorkspace)); });
+    await flushEffects();
+  });
+
+  afterEach(async () => {
+    await act(async () => { root.unmount(); });
+    host.remove();
+    localStorage.clear();
+    delete (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+    delete (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT;
+  });
+
+  it("ends the loading state and keeps the startup error visible when native session discovery fails", () => {
+    const content = document.body.textContent ?? "";
+    expect(content).toContain("Saber could not reconcile terminal sessions: Error: native terminal unavailable");
+    expect(content).not.toContain("Checking terminal sessions…");
+    expect(content).toContain("No terminal is running for this task.");
   });
 });
