@@ -93,19 +93,6 @@ Tests live beside the code as `*.test.ts(x)` files and run with `bun run test` (
 
 ---
 
-## 🎉 We Recently Slayed a Dragon (PR #6)
-
-We [refactored the server into route modules](https://github.com/BimbitoPt/saber/pull/6) — yes, really. The highlights:
-
-- **Split** the 661-line monolith `src/server.ts` into focused modules
-- **Moved** every route body byte-identically — zero logic changes, promise
-- **Fixed** the route-table generator to scan modules directly, eliminating a bogus `PATCH /api/terminals/:id` row the old heuristic invented
-- **Added** golden-set tests (`routeScan.test.ts`) that pin the route set (22 literals + 17 matchers) to catch drift. A forgotten route block will fail a test. You've been warned. 👀
-
-**Result**: The full suite passes. Behavior unchanged. Integrity preserved. 🛡️
-
----
-
 ## 🐦 Hang Out With Us
 
 [![GitHub](https://img.shields.io/badge/GitHub-@BimbitoPt-181717?logo=github)](https://github.com/BimbitoPt)
