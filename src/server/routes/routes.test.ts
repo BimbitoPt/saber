@@ -2,8 +2,9 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import type { TaskStore } from "../taskStore";
+import { canonicalPath } from "../canonicalPath";
 
 vi.mock("../providers/executables", async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
@@ -339,13 +340,13 @@ describe("launch routes", () => {
     expect(launched?.status).toBe(201);
     const context = await json(launched);
     expect(context.status).toBe("repository");
-    expect(context.project.root).toBe(repository);
-    expect(context.project.displayName).toBe(repository.split("/").pop());
+    expect(context.project.root).toBe(canonicalPath(repository));
+    expect(context.project.displayName).toBe(basename(repository));
     expect(context.repository.dirty).toBe(false);
-    expect(context.guidance.agentsFile).toBe(join(repository, "AGENTS.md"));
+    expect(canonicalPath(context.guidance.agentsFile)).toBe(canonicalPath(join(repository, "AGENTS.md")));
 
     const records = await json(await api("/api/project-records"));
-    expect(records.filter((record: { root: string }) => record.root === repository)).toHaveLength(1);
+    expect(records.filter((record: { root: string }) => canonicalPath(record.root) === canonicalPath(repository))).toHaveLength(1);
     rmSync(repository, { recursive: true, force: true });
   });
 
@@ -368,7 +369,7 @@ describe("launch routes", () => {
     process.env.SABER_LAUNCH_CWD = repository;
     const context = await json(await api("/api/launch-context"));
     expect(context.status).toBe("repository");
-    expect(context.project.root).toBe(repository);
+    expect(context.project.root).toBe(canonicalPath(repository));
     rmSync(repository, { recursive: true, force: true });
 
     delete process.env.SABER_LAUNCH_CWD;

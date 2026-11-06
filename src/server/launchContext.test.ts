@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TaskStore } from "./taskStore";
+import { canonicalPath } from "./canonicalPath";
 import { buildLaunchContext, discoverGuidance, discoverRepositoryState, launchContextFromEnv, LAUNCH_CWD_ENV, resolveGitRoot } from "./launchContext";
 
 const stores: TaskStore[] = [];
@@ -74,7 +75,7 @@ describe("launch context", () => {
       throw new Error("unexpected git call");
     });
     expect(context.status).toBe("repository");
-    expect(context.project).toMatchObject({ root: fakeRoot, displayName: "saber-fake-repo" });
+    expect(context.project).toMatchObject({ root: canonicalPath(fakeRoot), displayName: "saber-fake-repo" });
     expect(context.repository).toEqual({ branch: "main", detached: false, dirty: false });
 
     const again = await buildLaunchContext(fakeRoot, store, async (_cwd, args) => {
@@ -83,7 +84,7 @@ describe("launch context", () => {
       if (args[0] === "status") return "";
       throw new Error("unexpected git call");
     });
-    expect(again.project?.root).toBe(fakeRoot);
+    expect(again.project?.root).toBe(canonicalPath(fakeRoot));
     expect(store.listProjects()).toHaveLength(1);
 
     const previous = store.registerProject(join(tmpdir(), "saber-previous"));
@@ -109,9 +110,9 @@ describe("launch context", () => {
     const context = await launchContextFromEnv(store, { [LAUNCH_CWD_ENV]: nested });
     expect(context.status).toBe("repository");
     expect(context.launchDirectory).toBe(nested);
-    expect(context.project?.root).toBe(root);
+    expect(context.project?.root).toBe(canonicalPath(root));
     expect(context.repository).toMatchObject({ branch: expect.any(String), dirty: false });
-    expect(context.guidance?.readme).toBe(join(root, "README.md"));
+    expect(canonicalPath(context.guidance?.readme ?? "")).toBe(canonicalPath(join(root, "README.md")));
 
     const unavailable = await launchContextFromEnv(store, {});
     expect(unavailable.status).toBe("unavailable");
