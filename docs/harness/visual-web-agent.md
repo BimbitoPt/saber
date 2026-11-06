@@ -4,6 +4,46 @@ Status: approved implementation baseline
 Audience: Saber coding agents working on frontend, marketing, product, and 3D web experiences
 Primary goal: make visual quality an engineered outcome rather than a prompt-dependent accident.
 
+## Product promise: prompt in, finished website out
+
+The target user may be a founder, shop owner, creator, or hobbyist with no development knowledge. A plain-language request such as "Build a premium 3D website for my car company" is enough to start. The agent is responsible for turning intent into a finished, running, visually verified website.
+
+**The user supplies intent, not implementation instructions.** Never require the user to specify a framework, package, 3D library, component system, hosting setup, camera, shader, or code structure. Choose those autonomously based on the brief and the target workspace. Do not expose internal technical decisions as questions.
+
+### Autonomous brief interpretation
+
+Convert a short prompt into an internal creative brief. Infer and record:
+- business type, audience, market position, and likely conversion goal;
+- brand personality, visual direction, typography, palette, and content voice;
+- page structure, navigation, key sections, calls to action, and realistic starter copy;
+- the role of 3D, the scene concept, interaction, motion, and mobile fallback;
+- responsive behavior, accessibility, and performance constraints.
+
+Use assumptions rather than blocking on missing details. Make assumptions visible in a short "I’m assuming..." note and keep them easy to change. Ask only if a missing detail prevents a credible result or risks misrepresenting the business. If the company name is missing, use a tasteful provisional name that is clearly editable rather than stopping.
+
+### Example: "Build a 3D website for my car company"
+
+A strong default interpretation is a premium automotive brand experience, not a generic company template:
+- cinematic full-screen hero with a high-quality vehicle focal point and restrained camera movement;
+- dramatic studio, road, or landscape environment chosen to fit the brand positioning;
+- clear model/vehicle storytelling, performance or craftsmanship highlights, gallery, company story, and enquiry/test-drive CTA;
+- tactile transitions, deliberate typography, considered lighting/materials, and a coherent color system;
+- meaningful vehicle interaction such as controlled orbit, color/material selection, or scroll-led reveal where it improves the story;
+- mobile-first fallback with optimized imagery or a lightweight scene, not a broken or empty WebGL canvas.
+
+Do not invent factual specifications, awards, prices, range, performance figures, certifications, customer logos, or testimonials. Use clearly labeled sample content or omit unverifiable claims. Use legitimate assets available in the repository or generated/original assets; do not hotlink random images or assume a 3D model exists. If a production-grade vehicle model is unavailable, create an intentional visual fallback and disclose it.
+
+### End-to-end autonomy
+
+1. **Understand** — read the user's plain-language prompt and inspect the workspace. Decide whether this is a new site or an existing site.
+2. **Fill gaps** — write the internal brief and design contract using sensible assumptions. Do not turn the process into a technical interview.
+3. **Choose** — select the stack, libraries, asset strategy, and 3D technique. Prefer the simplest approach that can achieve the visual target.
+4. **Create** — build the actual site, including complete copy, coherent page sections, responsive layouts, interactions, and 3D scene/fallback.
+5. **Run** — install dependencies only when needed, start the real dev server, and resolve runtime/build errors.
+6. **Inspect** — use the browser to inspect desktop, tablet, and mobile. Capture screenshots and test the actual interactions.
+7. **Improve** — critique the result against the rubric, fix the highest-impact visual and functional defects, and repeat.
+8. **Hand off** — explain in plain language what was built, how to preview/run it, what assumptions or sample content remain, and what could be customized next.
+
 ## Operating model
 
 The harness is a closed loop:
