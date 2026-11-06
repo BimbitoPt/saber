@@ -17,6 +17,7 @@ import { visualWebContext } from "./visualWeb";
 
 export const DEFAULT_ROLE_ID = "default";
 export const DEFAULT_ROLE_INSTRUCTIONS = "Act as the project's implementing agent: follow the profile conventions and stack, verify each acceptance criterion with real checks, and report verification per criterion without merging or deploying.";
+export const AGENT_STOP_ESCALATION_MS = 2_000;
 
 function isExistingDirectory(path: string) {
   try {
@@ -67,6 +68,7 @@ export interface StartOptions {
 export class AgentRuns {
   private active = new Map<string, ChildProcess>();
   private stopping = new Set<string>();
+  private escalationTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor(private store: TaskStore, private provider: (name?: ProviderId) => AgentProvider = getProvider, private enhancePrompt = enhance, private terminalLocks: TerminalLocks = getTerminalLocks()) {}
 
@@ -118,6 +120,7 @@ export class AgentRuns {
       child.on("error", (error) => {
         if (!this.active.has(run.id)) return;
         this.active.delete(run.id);
+        this.clearEscalation(run.id);
         try { this.store.appendEvent(run.id, JSON.stringify({ type: "provider_error", message: error.message })); } catch {}
         try {
           this.store.finishRun(run.id, "error", null);
@@ -130,6 +133,7 @@ export class AgentRuns {
       child.on("close", (code) => {
         if (!this.active.has(run.id)) return;
         this.active.delete(run.id);
+        this.clearEscalation(run.id);
         try {
           append(pending + decoder.end());
         } catch {
@@ -258,10 +262,41 @@ export class AgentRuns {
       this.stopping.delete(id);
       throw error;
     }
+    this.escalateLater(id, child);
+  }
+
+  /** A provider that ignores SIGTERM must not hold its workspace open forever. */
+  private escalateLater(id: string, child: ChildProcess): void {
+    const timer = setTimeout(() => {
+      this.escalationTimers.delete(id);
+      if (this.active.get(id) !== child) return;
+      try { child.kill("SIGKILL"); } catch {}
+    }, AGENT_STOP_ESCALATION_MS);
+    (timer as unknown as { unref?: () => void }).unref?.();
+    this.escalationTimers.set(id, timer);
+  }
+
+  private clearEscalation(id: string): void {
+    const timer = this.escalationTimers.get(id);
+    if (!timer) return;
+    clearTimeout(timer);
+    this.escalationTimers.delete(id);
   }
 
   hasActiveWorkspace(project: string) {
     return [...this.active.keys()].some((id) => workspacesOverlap(this.store.getRun(id)!.project, project));
+  }
+
+  async stopAll(timeoutMs = 5_000): Promise<void> {
+    const ids = [...this.active.keys()];
+    await Promise.allSettled(ids.map((id) => this.stop(id)));
+    const deadline = Date.now() + timeoutMs;
+    while (this.active.size > 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    for (const child of [...this.active.values()]) {
+      try { child.kill("SIGKILL"); } catch {}
+    }
   }
 }
 
@@ -269,4 +304,8 @@ const runtime = globalThis as typeof globalThis & { saberAgentRuns?: AgentRuns }
 
 export function getAgentRuns() {
   return runtime.saberAgentRuns ??= new AgentRuns(getTaskStore());
+}
+
+export function stopAllAgentRuns(): Promise<void> {
+  return getAgentRuns().stopAll();
 }

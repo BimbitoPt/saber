@@ -8,6 +8,7 @@ export function BrowserPane() {
   const [live, setLive] = useState(false);
   const [shot, setShot] = useState(0);
   const [servers, setServers] = useState<Array<{ project: string; port: number; status: string }>>([]);
+  const [error, setError] = useState("");
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -23,48 +24,79 @@ export function BrowserPane() {
   }, []);
 
   useEffect(() => {
-    if (live) {
+    if (!live) return;
+    const startTimer = () => {
+      if (timerRef.current) return;
       timerRef.current = setInterval(() => setShot((n) => n + 1), 1000);
-    }
-    return () => {
+    };
+    const stopTimer = () => {
       if (timerRef.current) clearInterval(timerRef.current);
       timerRef.current = null;
+    };
+    const onVisibility = () => {
+      if (document.hidden) stopTimer();
+      else startTimer();
+    };
+    if (!document.hidden) startTimer();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      stopTimer();
+      document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [live]);
 
   async function navigate(u: string) {
-    await fetch("/api/browser/goto", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ url: u }),
-    });
-    setShot((n) => n + 1);
+    setError("");
+    try {
+      const res = await fetch("/api/browser/goto", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ url: u }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null) as { error?: string } | null;
+        throw new Error(data?.error ?? `The browser could not open ${u} (HTTP ${res.status})`);
+      }
+      setShot((n) => n + 1);
+    } catch (e) {
+      setError(String(e));
+    }
   }
 
   async function act(action: string) {
-    await fetch("/api/browser/act", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ action, target }),
-    });
-    setShot((n) => n + 1);
+    setError("");
+    try {
+      const res = await fetch("/api/browser/act", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action, target }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null) as { error?: string } | null;
+        throw new Error(data?.error ?? `The browser could not ${action} the element (HTTP ${res.status})`);
+      }
+      setShot((n) => n + 1);
+    } catch (e) {
+      setError(String(e));
+    }
   }
 
   const up = servers.filter((s) => s.status === "up");
 
   return (
     <div className="flex h-full min-h-0 flex-col">
+      {error && <p role="alert" className="border-b border-line-soft bg-panel px-2 py-1.5 text-xs text-err">{error}</p>}
       <div className="flex flex-wrap items-center gap-2 border-b border-line-soft bg-panel p-2 text-xs">
         <input
           value={url}
           onChange={(e) => setUrl(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && navigate(url)}
+          onKeyDown={(e) => { if (e.key === "Enter") void navigate(url); }}
           placeholder="http://localhost:8081"
           aria-label="URL to visit"
           className="w-64 rounded-md border border-line bg-panel-2 px-2.5 py-1.5 font-mono text-[11px] placeholder:text-faint"
         />
         <button
-          onClick={() => navigate(url)}
+          onClick={() => void navigate(url)}
           className="rounded-md border border-line px-2.5 py-1.5 text-[11px] text-muted transition-colors duration-150 hover:bg-panel-2"
         >
           go
@@ -77,7 +109,7 @@ export function BrowserPane() {
           className="w-40 rounded-md border border-line bg-panel-2 px-2.5 py-1.5 font-mono text-[11px] placeholder:text-faint"
         />
         <button
-          onClick={() => act("click")}
+          onClick={() => void act("click")}
           className="rounded-md border border-line px-2.5 py-1.5 text-[11px] text-muted transition-colors duration-150 hover:bg-panel-2"
         >
           click
@@ -92,7 +124,7 @@ export function BrowserPane() {
             onClick={() => {
               const u = `http://localhost:${s.port}`;
               setUrl(u);
-              navigate(u);
+              void navigate(u);
             }}
             className="flex items-center gap-1 rounded-md border border-line px-2.5 py-1.5 text-[11px] text-muted transition-colors duration-150 hover:bg-panel-2"
           >

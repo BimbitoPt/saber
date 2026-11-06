@@ -227,12 +227,18 @@ describe("verification browser lifecycle", () => {
       stopAll: async () => {
         calls.push("stopAll");
       },
+      stopAgentRuns: async () => {
+        calls.push("stopAgentRuns");
+      },
       shutdownBrowser: async () => {
         calls.push("shutdownBrowser");
       },
+      flushEvents: () => {
+        calls.push("flushEvents");
+      },
     });
 
-    expect(calls).toEqual(["reconcile", "stopAll", "shutdownBrowser"]);
+    expect(calls).toEqual(["reconcile", "stopAll", "stopAgentRuns", "shutdownBrowser", "flushEvents"]);
   });
 
   it("PROC-05 server shutdown still runs the browser step when a dev server step fails", async () => {
@@ -247,12 +253,18 @@ describe("verification browser lifecycle", () => {
         stopAll: async () => {
           calls.push("stopAll");
         },
+        stopAgentRuns: async () => {
+          throw new Error("agent runs failed");
+        },
         shutdownBrowser: async () => {
           calls.push("shutdownBrowser");
         },
+        flushEvents: () => {
+          calls.push("flushEvents");
+        },
       });
 
-      expect(calls).toEqual(["stopAll", "shutdownBrowser"]);
+      expect(calls).toEqual(["stopAll", "shutdownBrowser", "flushEvents"]);
       expect(logged).toHaveBeenCalled();
     } finally {
       logged.mockRestore();

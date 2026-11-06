@@ -7,20 +7,29 @@ const mocks = vi.hoisted(() => ({
   mounts: {} as Record<string, number>,
   unmounts: {} as Record<string, number>,
   starts: {} as Record<string, number>,
+  invoke: vi.fn(),
   listProjects: vi.fn(),
   listTasks: vi.fn(),
   reconcileSessions: vi.fn(),
 }));
 
-vi.mock("../lib/api", () => ({
-  createTask: vi.fn(),
-  listProjects: () => mocks.listProjects(),
-  listTasks: () => mocks.listTasks(),
-  reconcileTerminalSessions: (...args: unknown[]) => mocks.reconcileSessions(...args),
-}));
+vi.mock("../lib/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/api")>();
+  return {
+    ...actual,
+    listProjects: () => mocks.listProjects(),
+    listTasks: () => mocks.listTasks(),
+    reconcileTerminalSessions: (...args: unknown[]) => mocks.reconcileSessions(...args),
+    listProviders: vi.fn(async () => []),
+    listTaskRuns: vi.fn(async () => []),
+    listVerifications: vi.fn(async () => ({ records: [], summary: { passed: 0, failed: 0, stale: 0, total: 0, state: "unverified" } })),
+    getProjectProfile: vi.fn(async () => null),
+    listRoles: vi.fn(async () => []),
+  };
+});
 
 vi.mock("@tauri-apps/api/core", () => ({
-  invoke: vi.fn(async (command: string) => command === "terminal_list" ? [] : undefined),
+  invoke: (...args: unknown[]) => mocks.invoke(...args),
 }));
 
 vi.mock("./TerminalSurface", async () => {
@@ -31,7 +40,7 @@ vi.mock("./TerminalSurface", async () => {
       active: boolean;
       session?: { id: string; status: string };
       startOnOpen: boolean;
-      onSessionChange: (session: { id: string; taskId: string; workdir: string; status: "running"; createdAt: number; startedAt: number }) => void;
+      onSessionChange: (session: { id: string; taskId: string; workdir: string; status: "running" | "stopped"; createdAt: number; startedAt: number }) => void;
     }) => {
       React.useEffect(() => {
         mocks.mounts[task.id] = (mocks.mounts[task.id] ?? 0) + 1;
@@ -41,10 +50,17 @@ vi.mock("./TerminalSurface", async () => {
         }
         return () => { mocks.unmounts[task.id] = (mocks.unmounts[task.id] ?? 0) + 1; };
       }, [task.id]);
-      return React.createElement("div", {
-        "data-testid": "terminal-" + task.id,
-        "data-active": String(active),
-      }, "SABER-" + task.id + "-MARKER");
+      return React.createElement(
+        "div",
+        {
+          "data-testid": "terminal-" + task.id,
+          "data-active": String(active),
+        },
+        "SABER-" + task.id + "-MARKER",
+        session?.status === "running"
+          ? React.createElement("button", { onClick: () => onSessionChange({ id: "session-" + task.id, taskId: task.id, workdir: task.project, status: "stopped", createdAt: 1, startedAt: 2 }) }, "STOP-SESSION")
+          : null,
+      );
     },
   };
 });
@@ -75,6 +91,7 @@ describe("TaskWorkspace terminal view lifecycle", () => {
     mocks.mounts = {};
     mocks.unmounts = {};
     mocks.starts = {};
+    mocks.invoke.mockResolvedValue([]);
     mocks.listProjects.mockResolvedValue(tasks.map((task) => ({ path: task.project, name: task.title })));
     mocks.listTasks.mockResolvedValue(tasks);
     mocks.reconcileSessions.mockResolvedValue([]);
@@ -125,11 +142,59 @@ describe("TaskWorkspace terminal view lifecycle", () => {
     await clickButton("Terminal");
 
     const taskAMarker = document.querySelector('[data-testid="terminal-task-a"]');
-    expect(taskAMarker?.textContent).toBe("SABER-task-a-MARKER");
+    expect(taskAMarker?.textContent).toContain("SABER-task-a-MARKER");
     expect(taskAMarker?.getAttribute("data-active")).toBe("true");
     expect(mocks.mounts["task-a"]).toBe(1);
     expect(mocks.unmounts["task-a"] ?? 0).toBe(0);
     expect(mocks.starts["task-a"]).toBe(1);
     expect(mocks.starts["task-b"]).toBe(1);
+  });
+
+  it("does not relaunch a stopped terminal when the view is left and revisited", async () => {
+    await clickButton("Start terminal");
+    expect(mocks.starts["task-a"]).toBe(1);
+
+    await clickButton("STOP-SESSION");
+    await clickButton("List");
+    expect(mocks.unmounts["task-a"]).toBe(1);
+
+    await clickButton("Terminal");
+    expect(mocks.mounts["task-a"]).toBe(2);
+    expect(mocks.starts["task-a"]).toBe(1);
+  });
+});
+
+
+describe("TaskWorkspace terminal startup errors", () => {
+  beforeEach(async () => {
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    vi.clearAllMocks();
+    localStorage.clear();
+    localStorage.setItem("saber.selectedTask", "task-a");
+    Object.defineProperty(window, "__TAURI_INTERNALS__", { value: {}, configurable: true });
+    mocks.invoke.mockRejectedValue(new Error("native terminal unavailable"));
+    mocks.listProjects.mockResolvedValue(tasks.map((task) => ({ path: task.project, name: task.title })));
+    mocks.listTasks.mockResolvedValue(tasks);
+    mocks.reconcileSessions.mockResolvedValue([]);
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    await act(async () => { root.render(createElement(TaskWorkspace)); });
+    await flushEffects();
+  });
+
+  afterEach(async () => {
+    await act(async () => { root.unmount(); });
+    host.remove();
+    localStorage.clear();
+    delete (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+    delete (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT;
+  });
+
+  it("ends the loading state and keeps the startup error visible when native session discovery fails", () => {
+    const content = document.body.textContent ?? "";
+    expect(content).toContain("Saber could not reconcile terminal sessions: Error: native terminal unavailable");
+    expect(content).not.toContain("Checking terminal sessions…");
+    expect(content).toContain("No terminal is running for this task.");
   });
 });

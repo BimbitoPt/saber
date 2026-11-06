@@ -490,9 +490,21 @@ export class TaskStore {
   }
 
   writeRunWorktree(record: RunWorktreeRecord): RunWorktreeRecord {
-    if (!this.getRunWorktree(record.runId)) throw new Error("Run worktree not found");
+    const existing = this.getRunWorktree(record.runId);
+    if (!existing) throw new Error("Run worktree not found");
+    if (existing.taskId !== record.taskId
+      || existing.path !== record.path
+      || existing.source !== record.source
+      || existing.sourceBranch !== record.sourceBranch
+      || existing.baseCommit !== record.baseCommit
+      || existing.branch !== record.branch) {
+      throw new Error("Run worktree identity cannot change");
+    }
+    if (existing.state === "removed" && record.state !== "removed") {
+      throw new Error("A removed run worktree cannot be restored");
+    }
     const normalized = this.normalizeRunWorktree(record);
-    this.db.prepare("UPDATE run_worktrees SET data = ? WHERE run_id = ?").run(JSON.stringify(normalized), normalized.runId);
+    this.db.prepare("UPDATE run_worktrees SET data = ? WHERE run_id = ?").run(JSON.stringify(normalized), existing.runId);
     return normalized;
   }
 

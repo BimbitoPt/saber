@@ -16,10 +16,35 @@ struct ServerProcess(Mutex<Option<Child>>);
 impl ServerProcess {
     fn stop(&self) {
         if let Some(mut child) = self.0.lock().unwrap().take() {
-            let _ = child.kill();
-            let _ = child.wait();
+            stop_server_process(&mut child);
         }
     }
+}
+
+#[cfg(unix)]
+fn request_termination(child: &Child) {
+    let _ = Command::new("kill")
+        .args(["-TERM", &child.id().to_string()])
+        .status();
+}
+
+#[cfg(not(unix))]
+fn request_termination(child: &Child) {
+    let _ = child.kill();
+}
+
+fn stop_server_process(child: &mut Child) {
+    request_termination(child);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        match child.try_wait() {
+            Ok(Some(_)) => return,
+            Ok(None) => thread::sleep(Duration::from_millis(100)),
+            Err(_) => break,
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 enum RuntimeEvent {

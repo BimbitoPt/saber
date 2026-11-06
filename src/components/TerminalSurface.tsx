@@ -28,6 +28,7 @@ export function TerminalSurface({ task, session, active, startOnOpen, onSessionC
   const [error, setError] = useState("");
   const [copyMessage, setCopyMessage] = useState("");
   const [recovering, setRecovering] = useState(false);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const workspaceBlocked = Boolean(task.workspace && task.workspace.state !== "ready");
   activeRef.current = active;
   sessionRef.current = session;
@@ -218,6 +219,7 @@ export function TerminalSurface({ task, session, active, startOnOpen, onSessionC
       resizeObserver?.disconnect();
       unlistenOutput?.();
       unlistenExit?.();
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
       terminalRef.current?.dispose();
       terminalRef.current = undefined;
       fitRef.current = undefined;
@@ -234,7 +236,8 @@ export function TerminalSurface({ task, session, active, startOnOpen, onSessionC
     } catch {
       setCopyMessage("Clipboard access is unavailable in this window.");
     }
-    window.setTimeout(() => setCopyMessage(""), 2200);
+    if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    copyTimerRef.current = setTimeout(() => setCopyMessage(""), 2200);
   }
 
   async function recover() {

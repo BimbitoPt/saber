@@ -5,6 +5,7 @@ import { handle as handleProjects } from "./projects";
 import { handle as handleRoles } from "./roles";
 import { handle as handleEnvironment } from "./environment";
 import { jsonResponse } from "../http";
+import { remoteApiAllowed, validateLoopbackTransport } from "../transport";
 import type { RouteHandler } from "./types";
 
 // Order only matters for overlapping paths, which the route sets do not have today.
@@ -22,6 +23,9 @@ export async function handleApi(request: Request): Promise<Response | null> {
   const url = new URL(request.url);
   const path = url.pathname;
   if (!path.startsWith("/api/")) return null;
+  if (!remoteApiAllowed() && !validateLoopbackTransport(request)) {
+    return jsonResponse({ error: "The Saber API only accepts requests from this machine." }, 403);
+  }
   const ctx = { request, url, path };
   for (const handler of handlers) {
     const response = await handler(ctx);

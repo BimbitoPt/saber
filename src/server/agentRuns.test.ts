@@ -7,7 +7,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TaskStore } from "./taskStore";
-import { AgentRuns } from "./agentRuns";
+import { AGENT_STOP_ESCALATION_MS, AgentRuns } from "./agentRuns";
 import { ProjectProfiles } from "./projectProfiles";
 import { TerminalLocks } from "./terminalLocks";
 import type { AgentProvider } from "./providers/types";
@@ -85,6 +85,76 @@ describe("agent runs", () => {
     child.emit("close", 1);
     expect(store.getRun(id)?.status).toBe("stopped");
     expect(store.events(id, 0).lines[0]).toContain("last output");
+  });
+
+  it("escalates a stop to SIGKILL when the provider ignores termination", async () => {
+    const { store, task } = setup();
+    const child = Object.assign(new EventEmitter(), {
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      kill: vi.fn((signal?: NodeJS.Signals | number) => {
+        if (signal === "SIGKILL") queueMicrotask(() => child.emit("close", null));
+        return true;
+      }),
+    });
+    const spawn = vi.fn<AgentProvider["spawn"]>(() => child as unknown as ReturnType<AgentProvider["spawn"]>);
+    const stubborn = new AgentRuns(store, () => adapter(spawn), (prompt) => prompt);
+    vi.useFakeTimers();
+    try {
+      const id = await stubborn.start(task.id);
+      const stopped = stubborn.stop(id);
+      await vi.advanceTimersByTimeAsync(AGENT_STOP_ESCALATION_MS);
+      await stopped;
+      await vi.advanceTimersByTimeAsync(1);
+      expect(child.kill).toHaveBeenCalledWith("SIGKILL");
+      expect(store.getRun(id)?.status).toBe("stopped");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not escalate when the child exits before the deadline", async () => {
+    const { store, task, child, service } = setup();
+    vi.useFakeTimers();
+    try {
+      const id = await service.start(task.id);
+      const stopped = service.stop(id);
+      child.emit("close", 0);
+      await stopped;
+      await vi.advanceTimersByTimeAsync(AGENT_STOP_ESCALATION_MS + 1_000);
+      expect(child.kill).toHaveBeenCalledTimes(1);
+      expect(store.getRun(id)?.status).toBe("stopped");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stopAll escalates to SIGKILL when a provider ignores termination", async () => {
+    const { store, task } = setup();
+    const child = Object.assign(new EventEmitter(), {
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      kill: vi.fn((signal?: NodeJS.Signals | number) => {
+        if (signal === "SIGKILL") queueMicrotask(() => child.emit("close", null));
+        return true;
+      }),
+    });
+    const spawn = vi.fn<AgentProvider["spawn"]>(() => child as unknown as ReturnType<AgentProvider["spawn"]>);
+    const escalating = new AgentRuns(store, () => adapter(spawn), (prompt) => prompt);
+    const id = await escalating.start(task.id);
+    await escalating.stopAll(200);
+    expect(child.kill).toHaveBeenCalledWith("SIGKILL");
+    expect(store.getRun(id)?.status).toBe("stopped");
+  });
+
+  it("stopAll settles quickly when every child exits on termination", async () => {
+    const { store, task, child, service } = setup();
+    const id = await service.start(task.id);
+    const pending = service.stopAll(500);
+    queueMicrotask(() => child.emit("close", 0));
+    await pending;
+    expect(store.getRun(id)?.status).toBe("stopped");
+    expect(child.kill).toHaveBeenCalledTimes(1);
   });
 
   it("blocks an agent run while an interactive terminal owns the workspace", async () => {

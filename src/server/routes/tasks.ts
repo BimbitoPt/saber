@@ -3,6 +3,7 @@ import { getTaskStore, MissingPreconditionError, StaleTaskError } from "../taskS
 import { getAgentRuns } from "../agentRuns";
 import { GitWorkspaceService, taskWorkdir } from "../gitWorkspaces";
 import { getTerminalLocks } from "../terminalLocks";
+import { workspaceActiveCheck } from "../workspaceGuards";
 import { createVerificationRecord, summarizeVerification } from "../../lib/verification";
 import type { TaskInput, TaskPatch, ProviderId, ScopePreview } from "../../lib/tasks";
 import { providerStatus } from "../providers/executables";
@@ -58,7 +59,8 @@ export const handle: RouteHandler = async (ctx) => {
   const workspaceMatch = /^\/api\/tasks\/([^/]+)\/workspace(\/merge)?$/.exec(path);
   if (workspaceMatch) {
     try {
-      const service = new GitWorkspaceService(getTaskStore(), (directory) => getAgentRuns().hasActiveWorkspace(directory), undefined, request.signal);
+      const store = getTaskStore();
+      const service = new GitWorkspaceService(store, workspaceActiveCheck(store), undefined, request.signal);
       const id = workspaceMatch[1];
       if (!getTaskStore().getTask(id)) return jsonResponse({ error: "Task not found" }, 404);
       if (workspaceMatch[2] && request.method === "POST") {
@@ -120,7 +122,8 @@ export const handle: RouteHandler = async (ctx) => {
   const runReviewMatch = /^\/api\/tasks\/([^/]+)\/runs\/([^/]+)\/(review|merge)$/.exec(path);
   if (runReviewMatch && runReviewMatch[3] === "review" && request.method === "GET") {
     try {
-      const service = new GitWorkspaceService(getTaskStore(), (directory) => getAgentRuns().hasActiveWorkspace(directory), undefined, request.signal);
+      const store = getTaskStore();
+      const service = new GitWorkspaceService(store, workspaceActiveCheck(store), undefined, request.signal);
       return jsonResponse(await service.reviewRunWorktree(runReviewMatch[1], runReviewMatch[2]));
     } catch (error) { return routeError(error); }
   }
@@ -128,7 +131,8 @@ export const handle: RouteHandler = async (ctx) => {
     try {
       const body = await request.json() as { head?: unknown };
       if (!body || typeof body.head !== "string") return jsonResponse({ error: "A reviewed commit is required" }, 400);
-      const service = new GitWorkspaceService(getTaskStore(), (directory) => getAgentRuns().hasActiveWorkspace(directory), undefined, request.signal);
+      const store = getTaskStore();
+      const service = new GitWorkspaceService(store, workspaceActiveCheck(store), undefined, request.signal);
       return jsonResponse(await service.mergeRunWorktree(runReviewMatch[1], runReviewMatch[2], body.head));
     } catch (error) { return routeError(error); }
   }
