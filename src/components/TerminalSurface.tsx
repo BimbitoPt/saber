@@ -237,7 +237,7 @@ export function TerminalSurface({ task, session, active, startOnOpen, onSessionC
       setCopyMessage("Clipboard access is unavailable in this window.");
     }
     if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
-    copyTimerRef.current = window.setTimeout(() => setCopyMessage(""), 2200);
+    copyTimerRef.current = setTimeout(() => setCopyMessage(""), 2200);
   }
 
   async function recover() {
