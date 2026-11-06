@@ -1,5 +1,16 @@
 # Visual Web Task Template
 
+## User prompt
+Paste the user's original plain-language request. Do not require technical terminology.
+
+## Assumptions (agent-owned)
+- Provisional business/brand name:
+- Audience and market position:
+- Primary conversion goal:
+- Brand personality and art direction:
+- Content assumptions requiring later confirmation:
+- Technical decisions made by the agent (no user input required):
+
 ## Outcome
 What should the visitor understand, feel, and do?
 
