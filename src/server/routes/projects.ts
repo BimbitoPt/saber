@@ -3,6 +3,7 @@ import { describeError } from "../../lib/error-capture";
 import { getTaskStore } from "../taskStore";
 import { reloadProjects } from "../projects";
 import { ProjectProfiles } from "../projectProfiles";
+import { buildLaunchContext, launchContextFromEnv } from "../launchContext";
 import { resolveWorkdir } from "./shared";
 import type { RouteHandler } from "./types";
 
@@ -12,6 +13,21 @@ function projectProfiles() {
 
 export const handle: RouteHandler = async (ctx) => {
   const { request, url, path } = ctx;
+
+  if (path === "/api/launch" && request.method === "POST") {
+    try {
+      const body = await request.json() as { cwd?: unknown };
+      if (!body || typeof body.cwd !== "string") return jsonResponse({ error: "The launch directory is required" }, 400);
+      const cwd = resolveWorkdir(body.cwd);
+      return jsonResponse(await buildLaunchContext(cwd, getTaskStore()), 201);
+    } catch (error) { return routeError(error); }
+  }
+
+  if (path === "/api/launch-context" && request.method === "GET") {
+    try {
+      return jsonResponse(await launchContextFromEnv(getTaskStore()));
+    } catch (error) { return routeError(error); }
+  }
 
   if (path === "/api/projects" && request.method === "GET") {
     try {

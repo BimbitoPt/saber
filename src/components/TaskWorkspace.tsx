@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { createTask, listProjects, listTasks, reconcileTerminalSessions, type Project } from "../lib/api";
-import { runStatusLabel, type TaskSummary, type TerminalSessionRecord } from "../lib/tasks";
+import { createTask, getLaunchContext, listProjects, listTasks, reconcileTerminalSessions, type Project } from "../lib/api";
+import { runStatusLabel, type LaunchContext, type TaskSummary, type TerminalSessionRecord } from "../lib/tasks";
 import { taskAttentionLabels, taskAttentionState, taskAttentionStates, type TaskAttentionState } from "../lib/taskAttention";
 import { isTerminalRuntimeAvailable } from "../lib/terminalRuntime";
 import type { TerminalRuntime } from "../lib/terminalRuntime";
@@ -30,6 +30,8 @@ export function TaskWorkspace() {
   const [terminalStartupError, setTerminalStartupError] = useState("");
   const [taskSwitcherOpen, setTaskSwitcherOpen] = useState(false);
   const [recentTaskIds, setRecentTaskIds] = useState<string[]>([]);
+  const [launchContext, setLaunchContext] = useState<LaunchContext | null>(null);
+  const inventoryPrefill = useRef("");
   const switcherReturnFocus = useRef<HTMLElement | null>(null);
   const restoreSwitcherFocus = useRef(false);
 
@@ -72,7 +74,19 @@ export function TaskWorkspace() {
     listProjects().then((items) => {
       if (cancelled) return;
       setProjects(items);
-      setForm((old) => ({ ...old, project: old.project || items[0]?.path || "" }));
+      inventoryPrefill.current = items[0]?.path ?? "";
+      setForm((old) => ({ ...old, project: old.project || inventoryPrefill.current }));
+    }).catch(() => {});
+    // Repository-first launch: the launcher hands the shell cwd to the server,
+    // which resolves the repository and registers it before any task exists.
+    getLaunchContext().then((context) => {
+      if (cancelled) return;
+      setLaunchContext(context);
+      if (context.status === "repository" && context.project) {
+        // The launched repository is the user's stated context: it overrides the
+        // generic inventory prefill but never a draft or an explicit choice.
+        setForm((old) => ({ ...old, project: !old.project.trim() || old.project === inventoryPrefill.current ? context.project!.root : old.project }));
+      }
     }).catch(() => {});
     const refresh = () => listTasks().then((items) => {
       if (!cancelled) { setTasks(items); setLoaded(true); }
@@ -173,6 +187,14 @@ export function TaskWorkspace() {
         <button type="button" aria-pressed={view === "board"} onClick={() => setView("board")} className={`rounded px-3 py-1.5 text-xs focus-visible:outline-2 focus-visible:outline-accent ${view === "board" ? "bg-panel-2 text-text" : "text-muted hover:text-text"}`}>Board</button>
       </div>
     </div>
+    {launchContext?.status === "repository" && launchContext.project && <div role="status" className="flex flex-wrap items-center gap-x-2 border-b border-line bg-panel px-4 py-1.5 text-xs text-muted">
+      <span className="font-semibold text-text">{launchContext.project.displayName}</span>
+      <span>{launchContext.repository?.branch ?? (launchContext.repository?.detached ? "detached HEAD" : "")}</span>
+      <span>{launchContext.repository?.dirty ? "uncommitted changes" : "clean tree"}</span>
+      {launchContext.guidance?.agentsFile && <span>AGENTS.md detected</span>}
+      {launchContext.guidance?.packageManager && <span>{launchContext.guidance.packageManager}</span>}
+    </div>}
+    {launchContext && launchContext.status !== "repository" && launchContext.fallback && <div role="status" className="border-b border-line bg-panel px-4 py-1.5 text-xs text-muted">{launchContext.fallback.reason}{launchContext.fallback.lastProject ? ` Last project: ${launchContext.fallback.lastProject.displayName ?? launchContext.fallback.lastProject.root}.` : ""}</div>}
     <div className={"grid min-h-0 flex-1 grid-cols-[18rem_1fr]" + (view === "board" ? " invisible pointer-events-none" : "")} aria-hidden={view === "board"}>
     <aside className="flex min-h-0 flex-col border-r border-line bg-panel">
       <div className="flex items-center justify-between border-b border-line p-4">
