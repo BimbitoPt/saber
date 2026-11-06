@@ -1,4 +1,4 @@
-import type { TaskInput, TaskPatch, TaskRecord, TaskSummary, RunRecord, ProviderId, ProviderStatus, TerminalSessionRecord, WorkspaceReview, VerificationRecord, VerificationSummary, VerificationOutcome, ProjectRecord, ProfileEntry, ProfileRevision, ScopePreview, SpecialistRole, TeamPlan, TeamRecord, TeamMemberSelection, LaunchContext } from "./tasks";
+import type { TaskInput, TaskPatch, TaskRecord, TaskSummary, RunRecord, RunStatus, ProviderId, ProviderStatus, TerminalSessionRecord, WorkspaceReview, VerificationRecord, VerificationSummary, VerificationOutcome, ProjectRecord, ProfileEntry, ProfileRevision, ScopePreview, SpecialistRole, TeamPlan, TeamRecord, TeamMemberSelection, LaunchContext } from "./tasks";
 
 export interface Project {
   name: string;
@@ -74,7 +74,7 @@ export function followUp(id: string, task: string) {
 }
 
 export interface EventsSnapshot {
-  status: "running" | "done" | "stopped" | "error" | "interrupted";
+  status: RunStatus;
   hasMore?: boolean;
   next: number;
   lines: string[];

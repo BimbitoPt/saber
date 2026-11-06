@@ -135,13 +135,17 @@ export function TaskDetail({ task, onSaved }: { task: TaskRecord; onSaved: (task
     await save();
     const result = await launchTask(task.id, { provider, model: model.trim() || undefined, followup: followup ? form.draft : undefined });
     setRunId(result.id);
-    setRuns(await listTaskRuns(task.id));
-    setMessage("Run started. The saved draft is retained for recovery.");
+    const refreshed = await listTaskRuns(task.id);
+    setRuns(refreshed);
+    setMessage(refreshed.find((run) => run.id === result.id)?.status === "queued"
+      ? "The active-run limit is reached. The run was accepted into the queue and will start automatically."
+      : "Run started. The saved draft is retained for recovery.");
   }
 
   const latest = runs[0];
   const active = runs.some((run) => run.status === "running");
   const interrupted = runs.filter((run) => run.status === "interrupted");
+  const queued = runs.filter((run) => run.status === "queued");
   const selectedRun = runs.find((run) => run.id === runId);
   const unavailable = checking || !readiness || !readiness.installed || readiness.auth === "signed-out";
   const workspaceUnavailable = !!task.workspace && task.workspace.state !== "ready";
@@ -179,9 +183,10 @@ export function TaskDetail({ task, onSaved }: { task: TaskRecord; onSaved: (task
           try { localStorage.setItem(`saber.provider.${task.id}`, next); } catch {}
         }} className={inputClass}>{Object.entries(providerLabels).map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>
         <label className="min-w-40 flex-1 text-xs text-muted">Model (optional)<input value={model} onChange={(e) => setModel(e.target.value)} placeholder={`${providerLabels[provider]} default`} className={inputClass} /></label>
-        <button disabled={unavailable || workspaceUnavailable || active || interrupted.length > 0 || conflict} onClick={() => void action(() => launch())} className="rounded bg-accent px-3 py-2 text-sm font-semibold text-black disabled:opacity-40">{latest ? "New run" : "Run specification"}</button>
-        {runs.some((run) => run.provider === provider && run.nativeSessionId && run.project === executionPath) && <button disabled={unavailable || workspaceUnavailable || active || interrupted.length > 0 || conflict || !form.draft.trim()} onClick={() => void action(() => launch(true))} className="rounded border border-line px-3 py-2 text-sm disabled:opacity-40">Send follow-up</button>}
+        <button disabled={unavailable || workspaceUnavailable || active || interrupted.length > 0 || queued.length > 0 || conflict} onClick={() => void action(() => launch())} className="rounded bg-accent px-3 py-2 text-sm font-semibold text-black disabled:opacity-40">{latest ? "New run" : "Run specification"}</button>
+        {runs.some((run) => run.provider === provider && run.nativeSessionId && run.project === executionPath) && <button disabled={unavailable || workspaceUnavailable || active || interrupted.length > 0 || queued.length > 0 || conflict || !form.draft.trim()} onClick={() => void action(() => launch(true))} className="rounded border border-line px-3 py-2 text-sm disabled:opacity-40">Send follow-up</button>}
         {active && <button onClick={() => void action(async () => { await stopSession(runs.find((run) => run.status === "running")!.id); setRuns(await listTaskRuns(task.id)); })} className="rounded border border-line px-3 py-2 text-sm">Stop run</button>}
+        {queued.map((run) => <button key={run.id} onClick={() => void action(async () => { await stopSession(run.id); setRuns(await listTaskRuns(task.id)); })} className="rounded border border-line px-3 py-2 text-sm">Cancel queued run</button>)}
       </div>
       <div className="flex flex-wrap items-center gap-2 text-xs text-muted"><span>{checking ? "Checking providers..." : readiness?.message ?? "Provider status unavailable."}</span><button disabled={checking} onClick={() => void refreshProviders()} className="underline disabled:opacity-40">Refresh providers</button>{capability && <span aria-label="Provider context capability">· {capability}</span>}</div>
       <SpecialistTeamPicker taskId={task.id} projectRoot={task.project} defaultProvider={provider} onLaunched={() => { void listTaskRuns(task.id).then(setRuns); }} />
@@ -197,6 +202,10 @@ export function TaskDetail({ task, onSaved }: { task: TaskRecord; onSaved: (task
       </details>
       {latest && latest.provider !== provider && <p className="text-xs text-muted">A new {providerLabels[provider]} run receives the saved specification and checkpoint. Native conversation history stays with its original provider.</p>}
     </fieldset>
+    {queued.map((run) => <div key={run.id} className="rounded border border-line p-3 text-xs text-muted">
+      <p>Queued at position {run.queuePosition ?? "-"}. The run holds its workspace and starts automatically when an active run settles. No provider process is running.</p>
+      <button disabled={busy} onClick={() => void action(async () => { await stopSession(run.id); setRuns(await listTaskRuns(task.id)); })} className="mt-2 rounded border border-line px-3 py-2">Cancel queued run</button>
+    </div>)}
     {interrupted.map((run) => <div key={run.id} className="rounded border border-line p-3 text-xs text-muted">
       <p>Saber restarted during this run. Its process may still be running. Stop it before releasing this workspace.</p>
       <button disabled={busy} onClick={() => void action(async () => { await acknowledgeRun(run.id); setRuns(await listTaskRuns(task.id)); })} className="mt-2 rounded border border-line px-3 py-2">I confirm the old process has stopped</button>

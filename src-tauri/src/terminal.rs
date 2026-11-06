@@ -8,6 +8,8 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, State};
 
+use crate::origin::{ensure_trusted_origin, ServerOrigin};
+
 struct Session {
     master: Box<dyn MasterPty + Send>,
     writer: Box<dyn Write + Send>,
@@ -261,6 +263,8 @@ impl TerminalSessions {
 
 #[tauri::command]
 pub fn terminal_start(
+    webview: tauri::WebviewWindow,
+    origin: State<'_, ServerOrigin>,
     app: AppHandle,
     state: State<'_, TerminalSessions>,
     session_id: String,
@@ -268,38 +272,53 @@ pub fn terminal_start(
     cols: u16,
     rows: u16,
 ) -> Result<(), String> {
+    ensure_trusted_origin(&webview, &origin)?;
     state.start(app, session_id, PathBuf::from(cwd), cols, rows)
 }
 
 #[tauri::command]
 pub fn terminal_write(
+    webview: tauri::WebviewWindow,
+    origin: State<'_, ServerOrigin>,
     state: State<'_, TerminalSessions>,
     session_id: String,
     data: String,
 ) -> Result<(), String> {
+    ensure_trusted_origin(&webview, &origin)?;
     state.write(&session_id, data)
 }
 
 #[tauri::command]
 pub fn terminal_resize(
+    webview: tauri::WebviewWindow,
+    origin: State<'_, ServerOrigin>,
     state: State<'_, TerminalSessions>,
     session_id: String,
     cols: u16,
     rows: u16,
 ) -> Result<(), String> {
+    ensure_trusted_origin(&webview, &origin)?;
     state.resize(&session_id, cols, rows)
 }
 
 #[tauri::command]
 pub fn terminal_close(
+    webview: tauri::WebviewWindow,
+    origin: State<'_, ServerOrigin>,
     state: State<'_, TerminalSessions>,
     session_id: String,
 ) -> Result<(), String> {
+    ensure_trusted_origin(&webview, &origin)?;
     state.close(&session_id)
 }
 
 #[tauri::command]
-pub fn terminal_list(state: State<'_, TerminalSessions>) -> Result<Vec<String>, String> {
+pub fn terminal_list(
+    webview: tauri::WebviewWindow,
+    origin: State<'_, ServerOrigin>,
+    state: State<'_, TerminalSessions>,
+) -> Result<Vec<String>, String> {
+    ensure_trusted_origin(&webview, &origin)?;
     state.list()
 }
 
